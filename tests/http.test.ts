@@ -153,7 +153,74 @@ describe('sign-in', () => {
   });
 
   it('shows the owner a link to the owner area, and others not', async () => {
-    expect(await (await get('/', OWNER)).text()).toContain('Open the owner area');
-    expect(await (await get('/', PEOPLE.alex)).text()).not.toContain('Open the owner area');
+    expect(await (await get('/', OWNER)).text()).toContain('<a href="/owner">Owner area</a>');
+    expect(await (await get('/', PEOPLE.alex)).text()).not.toContain('href="/owner"');
+  });
+});
+
+describe('pages for signed-in people', () => {
+  const idOf = async (googleResponseId: string) => (await pool.query('SELECT id FROM submissions WHERE google_response_id = $1', [googleResponseId])).rows[0].id as string;
+  const text = async (path: string, email?: string) => (await get(path, email)).text();
+
+  it('shows a signed-out visitor only the sign-in page, with no form names', async () => {
+    const html = await text('/');
+    expect(html).toContain('form-board');
+    for (const leak of ['Community Project Ideas', 'Volunteer Sign-up', 'Help Requests', 'Event Feedback']) expect(html).not.toContain(leak);
+  });
+
+  it('lists Alex\'s own three submissions, newest first, and the open forms Alex hasn\'t sent', async () => {
+    const html = await text('/', PEOPLE.alex);
+    const mine = html.slice(html.indexOf('My submissions'));
+    const titles = [...mine.matchAll(/<span class="title">([^<]+)<\/span>/g)].map((m) => m[1]);
+    expect(titles).toEqual(['Community Project Ideas', 'Community Project Ideas', 'Help Requests']);
+    const open = html.slice(html.indexOf('Open forms'), html.indexOf('My submissions'));
+    // Ideas is sent, Help is closed; Event Feedback stays open because the entry with Alex's typed email isn't Alex's.
+    expect([...open.matchAll(/<span class="title">([^<]+)<\/span>/g)].map((m) => m[1])).toEqual(['Event Feedback', 'Volunteer Sign-up']);
+    expect(open).toContain('href="https://docs.google.com/forms/d/e/fake-form-volunteer/viewform"');
+  });
+
+  it('never puts another person\'s email or answers in Alex\'s page source', async () => {
+    const html = await text('/', PEOPLE.alex) + (await text(`/submissions/${await idOf('ideas-resp-001')}`, PEOPLE.alex));
+    for (const other of [PEOPLE.sam, PEOPLE.jordan, PEOPLE.taylor, PEOPLE.morgan, 'Written by someone pretending to be Alex']) expect(html).not.toContain(other);
+  });
+
+  it('shows Jo, who sent nothing, all three open forms and an empty list', async () => {
+    const html = await text('/', PEOPLE.jo);
+    expect(html).toContain('You haven’t sent any of these forms yet');
+    expect([...html.matchAll(/<span class="title">([^<]+)<\/span>/g)].map((m) => m[1])).toEqual(['Community Project Ideas', 'Event Feedback', 'Volunteer Sign-up']);
+  });
+
+  it('shows a person their own submission, read-only, with answers as plain text', async () => {
+    const res = await get(`/submissions/${await idOf('ideas-resp-001')}`, PEOPLE.alex);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt; Community garden');
+    expect(html).toContain('can’t be changed here');
+    expect(html).not.toMatch(/<form[^>]*action="\/api\/owner/);
+  });
+
+  it('answers 404 for someone else\'s submission, the same as for one that doesn\'t exist', async () => {
+    const sams = await get(`/submissions/${await idOf('vol-resp-001')}`, PEOPLE.alex);
+    const missing = await get('/submissions/999999', PEOPLE.alex);
+    expect(sams.status).toBe(404);
+    expect(missing.status).toBe(404);
+    expect(await sams.text()).not.toContain('Volunteer Sign-up');
+  });
+
+  it('answers 401 for a submission page when signed out', async () => {
+    expect((await get(`/submissions/${await idOf('ideas-resp-001')}`)).status).toBe(401);
+  });
+
+  it('hides a submission from its sender once the owner deletes it', async () => {
+    const id = await idOf('ideas-resp-001');
+    await post(`/api/owner/submissions/${id}/delete`, { email: OWNER });
+    expect((await get(`/submissions/${id}`, PEOPLE.alex)).status).toBe(404);
+    expect(await text('/', PEOPLE.alex)).not.toContain(`/submissions/${id}"`);
+  });
+
+  it('moves a form out of "Open forms" when it closes', async () => {
+    await pool.query("UPDATE forms SET accepting_responses = false WHERE google_form_id = 'fake-form-volunteer'");
+    const html = await text('/', PEOPLE.jo);
+    expect(html).not.toContain('Volunteer Sign-up');
   });
 });
