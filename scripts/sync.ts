@@ -3,12 +3,11 @@
 import pg from 'pg';
 import { createFakeSource } from '../src/fake-google/source.ts';
 import { requireEnv } from '../src/lib/db.ts';
-import { loadFormsConfig } from '../src/lib/forms-config.ts';
 import { syncAll } from '../src/lib/sync.ts';
 
 const pool = new pg.Pool({ connectionString: requireEnv('DATABASE_URL') });
 try {
-  const results = await syncAll(pool, createFakeSource(), await loadFormsConfig());
+  const results = await syncAll(pool, createFakeSource());
   console.table(results);
   if (results.some((r) => !r.ok)) process.exitCode = 1;
 } finally {

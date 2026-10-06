@@ -14,7 +14,8 @@
     "sync": "node --env-file-if-exists=.env scripts/sync.ts",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "google:check": "node --env-file-if-exists=.env scripts/google-check.ts"
   },
   "dependencies": {
     "next": "^16.4.0",

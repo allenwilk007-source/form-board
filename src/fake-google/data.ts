@@ -37,10 +37,12 @@ export const Q = {
 const q = (questionId: string, title: string) => ({ itemId: `i-${questionId}`, title, questionItem: { question: { questionId } } });
 const published = (open: boolean) => ({ publishState: { isPublished: true, isAcceptingResponses: open } });
 const uri = (id: string) => `https://docs.google.com/forms/d/e/${id}/viewform`;
+const verified = { emailCollectionType: 'VERIFIED' as const };
 
 export const fakeForms: GoogleForm[] = [
   {
     formId: IDEAS_FORM_ID,
+    settings: verified,
     info: { title: 'Community Project Ideas' },
     responderUri: uri(IDEAS_FORM_ID),
     publishSettings: published(true),
@@ -48,6 +50,7 @@ export const fakeForms: GoogleForm[] = [
   },
   {
     formId: VOLUNTEER_FORM_ID,
+    settings: verified,
     info: { title: 'Volunteer Sign-up' },
     responderUri: uri(VOLUNTEER_FORM_ID),
     publishSettings: published(true),
@@ -55,6 +58,7 @@ export const fakeForms: GoogleForm[] = [
   },
   {
     formId: FEEDBACK_FORM_ID,
+    settings: { emailCollectionType: 'RESPONDER_INPUT' as const },
     info: { title: 'Event Feedback' },
     responderUri: uri(FEEDBACK_FORM_ID),
     publishSettings: published(true),
@@ -62,6 +66,7 @@ export const fakeForms: GoogleForm[] = [
   },
   {
     formId: HELP_FORM_ID,
+    settings: verified,
     info: { title: 'Help Requests' },
     responderUri: uri(HELP_FORM_ID),
     publishSettings: published(false),
