@@ -28,9 +28,12 @@ export async function loadFieldConfig(): Promise<FieldConfig> {
   return parseFieldConfig(JSON.parse(await readFile(CONFIG_PATH, 'utf8')));
 }
 
-/** Sets questions.is_public from the config for every form in the database. Unlisted questions and forms become private. */
-export async function applyFieldConfig(db: Queryable, config: FieldConfig): Promise<void> {
-  const { rows: forms } = await db.query<{ id: string; google_form_id: string }>('SELECT id, google_form_id FROM forms');
+/** Sets questions.is_public from the config, for one form or all of them. Unlisted questions and forms become private. */
+export async function applyFieldConfig(db: Queryable, config: FieldConfig, onlyFormId?: string): Promise<void> {
+  const { rows: forms } = await db.query<{ id: string; google_form_id: string }>(
+    'SELECT id, google_form_id FROM forms WHERE $1::bigint IS NULL OR id = $1',
+    [onlyFormId ?? null],
+  );
   for (const form of forms) {
     const publicIds = config.forms[form.google_form_id]?.public.map((f) => f.id) ?? [];
     await db.query('UPDATE questions SET is_public = (google_question_id = ANY($2::text[])) WHERE form_id = $1', [form.id, publicIds]);
