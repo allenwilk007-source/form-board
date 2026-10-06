@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     globalSetup: ['tests/global-setup.ts'],
     fileParallelism: false, // database tests share one test database
+    hookTimeout: 120_000,
   },
 });

@@ -11,14 +11,22 @@
     "db:seed": "node --env-file-if-exists=.env scripts/seed.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "sync": "node --env-file-if-exists=.env scripts/sync.ts"
+    "sync": "node --env-file-if-exists=.env scripts/sync.ts",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
   },
   "dependencies": {
-    "pg": "^8.23.1"
+    "next": "^16.4.0",
+    "pg": "^8.23.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }

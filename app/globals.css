@@ -1,0 +1,30 @@
+/* Plain, readable base styles. The full design arrives in Phase 4. */
+:root { --bg: #f4f6f7; --surface: #fff; --fg: #15212b; --muted: #536270; --line: #d8dfe4; --accent: #0b6363; --accent-fg: #fff; --ok: #1d7347; --warn: #8a4f00; --danger: #b42318; }
+@media (prefers-color-scheme: dark) { :root { --bg: #10171d; --surface: #172129; --fg: #e3eaef; --muted: #9fb0bd; --line: #2a3843; --accent: #5cc4c0; --accent-fg: #0b1a1a; --ok: #6fd39c; --warn: #f0b765; --danger: #ff8a7f; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, "Segoe UI", sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 24px; }
+main > * { min-width: 0; }
+header.bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+h1, h2 { line-height: 1.2; margin: 0; }
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
+.notice { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+td.num { font-variant-numeric: tabular-nums; }
+button, .button { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; text-decoration: none; display: inline-block; }
+button.ghost, .button.ghost { background: none; color: var(--accent); }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+input, select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; }
+form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+label { display: grid; gap: 4px; font-size: .85rem; color: var(--muted); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ok { color: var(--ok); } .warn { color: var(--warn); }
+dl { display: grid; grid-template-columns: minmax(140px, 32%) 1fr; gap: 8px 16px; margin: 0; }
+dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) { dl { grid-template-columns: 1fr; gap: 2px; } dd { margin-bottom: 10px; } }
+nav.pages { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
