@@ -21,10 +21,10 @@ export default async function OwnerSubmissionPage({ params, searchParams }: { pa
   return (
     <>
       <SignedInBar email={email} />
-      <main>
+      <main id="main">
         <p><a href="/owner">← All submissions</a></p>
         <h1>{s.form_title}</h1>
-        <dl>
+        <dl className="meta">
           <dt>Sent</dt><dd>{fmt(s.submitted_at)}{s.last_submitted_at.getTime() !== s.submitted_at.getTime() && `, edited ${fmt(s.last_submitted_at)}`}</dd>
           <dt>Belongs to</dt><dd>{s.owner_email ?? 'nobody'}</dd>
           <dt>Email Google recorded</dt><dd>{s.respondent_email ?? 'none'}</dd>
@@ -38,7 +38,7 @@ export default async function OwnerSubmissionPage({ params, searchParams }: { pa
           <>
             <section>
               <h2>Answers</h2>
-              <dl>
+              <dl className="answers">
                 {s.questions.filter((q) => q.id in s.answers).map((q) => (
                   <div key={q.id} style={{ display: 'contents' }}>
                     <dt>{q.title}{q.removed && ' (question removed)'}</dt>

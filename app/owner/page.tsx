@@ -29,7 +29,7 @@ export default async function OwnerPage({ searchParams }: { searchParams: Promis
   return (
     <>
       <SignedInBar email={email} />
-      <main>
+      <main id="main">
         <h1>Owner area</h1>
         {sp.synced && <p className={`notice ${sp.synced === 'ok' ? 'ok' : 'warn'}`} role="status">{sp.synced === 'ok' ? 'Sync finished.' : 'Sync finished with errors. See the sync log.'}</p>}
         {sp.deleted && <p className="notice ok" role="status">Submission deleted.</p>}
