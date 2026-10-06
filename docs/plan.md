@@ -80,6 +80,8 @@ Views: "Active" = published and `pending`. "Archive" = published and `resolved` 
 3. **Deleted in Google Forms:** the submission is hidden and `removed_from_source_at` is set. It is
    not deleted from the site's database.
 4. **Statuses:** `pending`, `resolved` (meaning "done") and `rejected`.
+5. **Empty answer from Google:** if Google returns no responses for a form that has some stored, the
+   run fails and is logged instead of hiding everything. A glitch must not unpublish the site.
 
 ## Example forms (fake)
 

@@ -13,6 +13,7 @@ cp .env.example .env
 npm run db:setup     # creates the local roles and database (needs Postgres superuser rights)
 npm run db:migrate
 npm run db:seed      # loads the two fake example forms
+npm run sync         # imports new and changed responses (from the fake forms, for now)
 npm test             # recreates a separate test database each run
 ```
 

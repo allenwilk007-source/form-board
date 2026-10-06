@@ -10,7 +10,8 @@
     "db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "node --env-file-if-exists=.env scripts/seed.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sync": "node --env-file-if-exists=.env scripts/sync.ts"
   },
   "dependencies": {
     "pg": "^8.23.1"
