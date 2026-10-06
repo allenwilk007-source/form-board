@@ -20,7 +20,7 @@ npm test             # recreates a separate test database each run
 
 ## Which forms appear
 
-Every form you own that was created in the last 60 days. A submission shows in its sender's
+Every form you own that was changed in the last 60 days (Google Drive's "last modified" date). A submission shows in its sender's
 "My submissions" only if the form's *Settings › Responses › Collect email addresses* is **Verified**;
 the site reads that setting from Google. Typed-in emails are never trusted.
 

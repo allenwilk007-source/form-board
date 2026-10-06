@@ -10,7 +10,7 @@ if (!source) {
 }
 
 const ids = await source.listForms();
-console.log(`Connected. Found ${ids.length} form${ids.length === 1 ? '' : 's'} you own, created in the last ${FORM_WINDOW_DAYS} days.\n`);
+console.log(`Connected. Found ${ids.length} form${ids.length === 1 ? '' : 's'} you own, changed in the last ${FORM_WINDOW_DAYS} days.\n`);
 const rows = [];
 for (const id of ids) {
   try {

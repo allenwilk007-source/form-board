@@ -3,7 +3,7 @@ import { collectsVerifiedEmails, formQuestions, isAcceptingResponses, normalizeR
 
 /** Where forms and responses come from: the Google Forms API in production, a fake in development and tests. */
 export type FormsSource = {
-  /** IDs of the forms to show and sync (in production: the owner's forms created in the last 60 days). */
+  /** IDs of the forms to show and sync (in production: the owner's forms changed in the last 60 days). */
   listForms(): Promise<string[]>;
   getForm(googleFormId: string): Promise<GoogleForm>;
   /** Every response to the form (the real client follows all pages). */

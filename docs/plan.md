@@ -50,7 +50,8 @@ setting *Settings › Responses › Collect email addresses* to be **Verified**.
 - The form's `responderUri` gives the "Fill in" link, and its publish settings say whether it is
   accepting responses. A form with no publish settings is treated as open (to confirm at go-live).
 - Sync fetches every response of each form on each run and upserts by `responseId`.
-- **Which forms:** every form the owner owns that was created in the last 60 days, listed through the
+- **Which forms:** every form the owner owns that was changed in the last 60 days (Drive's
+  `modifiedTime`), listed through the
   Drive API. Sync reads as the owner with a one-time, read-only OAuth approval (refresh token). A form
   that drops out of the window leaves "Open forms"; people keep their past submissions.
 - Risk: Google expires the approval after 7 days while the app is in "Testing", and may restrict the

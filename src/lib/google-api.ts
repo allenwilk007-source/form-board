@@ -10,7 +10,7 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/forms.responses.readonly', // read the responses
 ];
 
-/** Forms created within this many days are listed. */
+/** Forms changed (in Google Drive's sense) within this many days are listed. */
 export const FORM_WINDOW_DAYS = 60;
 
 type Options = {
@@ -56,11 +56,11 @@ export function createGoogleSource(opts: Options): FormsSource {
   return {
     async listForms() {
       const since = new Date(now() - FORM_WINDOW_DAYS * 864e5).toISOString();
-      const q = `mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false and createdTime > '${since}'`;
+      const q = `mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false and modifiedTime > '${since}'`;
       const ids: string[] = [];
       let pageToken: string | undefined;
       do {
-        const params = new URLSearchParams({ q, fields: 'nextPageToken, files(id)', pageSize: '100', orderBy: 'createdTime desc' });
+        const params = new URLSearchParams({ q, fields: 'nextPageToken, files(id)', pageSize: '100', orderBy: 'modifiedTime desc' });
         if (pageToken) params.set('pageToken', pageToken);
         const page = await get<{ files?: { id: string }[]; nextPageToken?: string }>(`https://www.googleapis.com/drive/v3/files?${params}`);
         ids.push(...(page.files ?? []).map((f) => f.id));

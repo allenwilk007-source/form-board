@@ -27,7 +27,7 @@ const source = (fetch: typeof globalThis.fetch, now = () => NOW) =>
   createGoogleSource({ clientId: 'cid', clientSecret: 'secret-xyz', refreshToken: 'refresh-abc', fetch, now });
 
 describe('listForms', () => {
-  it('asks Drive for forms the owner owns, not trashed, created in the last 60 days, following every page', async () => {
+  it('asks Drive for forms the owner owns, not trashed, changed in the last 60 days, following every page', async () => {
     const g = fakeGoogle({
       [TOKEN]: okToken,
       [DRIVE]: (url) => (url.searchParams.get('pageToken') ? { body: { files: [{ id: 'f3' }] } } : { body: { files: [{ id: 'f1' }, { id: 'f2' }], nextPageToken: 'p2' } }),
@@ -35,7 +35,7 @@ describe('listForms', () => {
     expect(await source(g.fetch).listForms()).toEqual(['f1', 'f2', 'f3']);
     const q = new URL(g.calls[1].url).searchParams.get('q')!;
     const since = new Date(NOW - FORM_WINDOW_DAYS * 864e5).toISOString();
-    expect(q).toBe(`mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false and createdTime > '${since}'`);
+    expect(q).toBe(`mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false and modifiedTime > '${since}'`);
     expect(since).toBe('2026-08-07T12:00:00.000Z');
     expect((g.calls[1].init?.headers as Record<string, string>).authorization).toBe('Bearer access-123');
   });
