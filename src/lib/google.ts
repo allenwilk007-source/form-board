@@ -4,6 +4,10 @@
 export type GoogleForm = {
   formId: string;
   info: { title: string };
+  /** The link people use to fill in the form. */
+  responderUri?: string;
+  /** Absent on forms created before Google's publish settings existed. */
+  publishSettings?: { publishState?: { isPublished?: boolean; isAcceptingResponses?: boolean } };
   items?: GoogleItem[];
 };
 
@@ -42,6 +46,13 @@ export type NormalizedResponse = {
   respondentEmail: string | null;
   answers: Record<string, Answer>;
 };
+
+/** Whether people can fill the form in now. A form without publish settings is treated as open. */
+export function isAcceptingResponses(form: GoogleForm): boolean {
+  const state = form.publishSettings?.publishState;
+  if (!state) return true;
+  return state.isPublished === true && state.isAcceptingResponses === true;
+}
 
 /** Every answerable question, in form order. A grid's rows become one question each, titled "Grid / Row". */
 export function formQuestions(form: GoogleForm): Question[] {

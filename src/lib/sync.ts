@@ -1,6 +1,6 @@
 import type pg from 'pg';
-import { applyFieldConfig, type FieldConfig } from './fields.ts';
-import { formQuestions, normalizeResponse, type GoogleForm, type GoogleResponse } from './google.ts';
+import type { FormsConfig } from './forms-config.ts';
+import { formQuestions, isAcceptingResponses, normalizeResponse, type GoogleForm, type GoogleResponse } from './google.ts';
 
 /** Where forms and responses come from: the Google Forms API in production, a fake in development and tests. */
 export type FormsSource = {
@@ -20,25 +20,24 @@ export type SyncResult = {
 };
 
 /** Syncs every form listed in the config. One form failing does not stop the others. */
-export async function syncAll(pool: pg.Pool, source: FormsSource, config: FieldConfig): Promise<SyncResult[]> {
+export async function syncAll(pool: pg.Pool, source: FormsSource, config: FormsConfig): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
   for (const googleFormId of Object.keys(config.forms)) results.push(await syncForm(pool, source, googleFormId, config));
   return results;
 }
 
 /**
- * Brings one form's questions and responses up to date. Safe to run any number of times, and
- * concurrently: responses are matched on Google's response ID, and runs for the same form take turns.
- * - New responses arrive hidden and pending.
- * - A response edited in Google gets the new answers and goes back to hidden.
- * - A response deleted in Google is hidden and marked removed; one taken down here is never re-imported.
- * - New questions are private unless the config lists them.
+ * Brings one form, its questions and its responses up to date. Safe to run any number of times,
+ * and concurrently: responses are matched on Google's response ID, and runs for one form take turns.
+ * - A response belongs to its sender only if the form's emails are verified (per the config).
+ * - A response edited in Google gets the new answers.
+ * - A response deleted in Google is marked removed (hidden from its sender); deleted here, never re-imported.
  * Every run is logged in sync_runs, including failures, which roll back all of that run's changes.
  */
-export async function syncForm(pool: pg.Pool, source: FormsSource, googleFormId: string, config: FieldConfig): Promise<SyncResult> {
+export async function syncForm(pool: pg.Pool, source: FormsSource, googleFormId: string, config: FormsConfig): Promise<SyncResult> {
   const result: SyncResult = { googleFormId, ok: false, fetched: 0, inserted: 0, updated: 0, removed: 0 };
-  const { rows } = await pool.query<{ id: string }>('INSERT INTO sync_runs (google_form_id) VALUES ($1) RETURNING id', [googleFormId]);
-  const runId = rows[0].id;
+  const runId = (await pool.query<{ id: string }>('INSERT INTO sync_runs (google_form_id) VALUES ($1) RETURNING id', [googleFormId])).rows[0].id;
+  const emailsVerified = config.forms[googleFormId]?.emailsVerified === true;
 
   const client = await pool.connect();
   let formId: string | null = null;
@@ -52,14 +51,19 @@ export async function syncForm(pool: pg.Pool, source: FormsSource, googleFormId:
 
     formId = (
       await client.query<{ id: string }>(
-        `INSERT INTO forms (google_form_id, title) VALUES ($1, $2)
-         ON CONFLICT (google_form_id) DO UPDATE SET title = EXCLUDED.title RETURNING id`,
-        [googleFormId, form.info.title],
+        `INSERT INTO forms (google_form_id, title, responder_uri, accepting_responses, emails_verified) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (google_form_id) DO UPDATE SET title = EXCLUDED.title, responder_uri = EXCLUDED.responder_uri,
+           accepting_responses = EXCLUDED.accepting_responses, emails_verified = EXCLUDED.emails_verified
+         RETURNING id`,
+        [googleFormId, form.info.title, form.responderUri ?? null, isAcceptingResponses(form), emailsVerified],
       )
     ).rows[0].id;
 
     const stored = (
-      await client.query<{ n: number }>('SELECT count(*)::int AS n FROM submissions WHERE form_id = $1 AND deleted_at IS NULL AND removed_from_source_at IS NULL', [formId])
+      await client.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM submissions WHERE form_id = $1 AND deleted_at IS NULL AND removed_from_source_at IS NULL',
+        [formId],
+      )
     ).rows[0].n;
     if (responses.length === 0 && stored > 0) {
       throw new Error(`Google returned no responses but ${stored} are stored; refusing to mark them all deleted. Check the form, then re-sync.`);
@@ -77,37 +81,44 @@ export async function syncForm(pool: pg.Pool, source: FormsSource, googleFormId:
       'UPDATE questions SET removed_at = now() WHERE form_id = $1 AND removed_at IS NULL AND NOT (google_question_id = ANY($2::text[]))',
       [formId, questions.map((q) => q.googleQuestionId)],
     );
-    await applyFieldConfig(client, config, formId);
 
     for (const r of responses) {
-      // Inserts new responses; updates only ones edited in Google; never touches taken-down rows.
+      const ownerEmail = emailsVerified && r.respondentEmail ? r.respondentEmail.toLowerCase() : null;
+      // Inserts new responses; updates only ones edited in Google; never touches deleted rows.
       const { rows: written } = await client.query<{ inserted: boolean }>(
-        `INSERT INTO submissions (form_id, google_response_id, answers, respondent_email, submitted_at, last_submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO submissions (form_id, google_response_id, answers, respondent_email, owner_email, submitted_at, last_submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (google_response_id) DO UPDATE SET
            answers = EXCLUDED.answers,
            respondent_email = EXCLUDED.respondent_email,
+           owner_email = EXCLUDED.owner_email,
            last_submitted_at = EXCLUDED.last_submitted_at,
-           visibility = 'hidden',
            synced_at = now()
          WHERE submissions.deleted_at IS NULL AND submissions.last_submitted_at IS DISTINCT FROM EXCLUDED.last_submitted_at
          RETURNING (xmax = 0) AS inserted`,
-        [formId, r.googleResponseId, r.answers, r.respondentEmail, r.submittedAt, r.lastSubmittedAt],
+        [formId, r.googleResponseId, r.answers, r.respondentEmail, ownerEmail, r.submittedAt, r.lastSubmittedAt],
       );
       if (written[0]?.inserted) result.inserted++;
       else if (written[0]) result.updated++;
     }
 
+    // If the form's Verified setting changed in the config, re-decide who owns its existing submissions.
+    await client.query(
+      `UPDATE submissions SET owner_email = CASE WHEN $2 THEN lower(respondent_email) END
+       WHERE form_id = $1 AND deleted_at IS NULL AND owner_email IS DISTINCT FROM CASE WHEN $2 THEN lower(respondent_email) END`,
+      [formId, emailsVerified],
+    );
+
     const ids = responses.map((r) => r.googleResponseId);
     result.removed =
       (
         await client.query(
-          `UPDATE submissions SET removed_from_source_at = now(), visibility = 'hidden'
+          `UPDATE submissions SET removed_from_source_at = now()
            WHERE form_id = $1 AND deleted_at IS NULL AND removed_from_source_at IS NULL AND NOT (google_response_id = ANY($2::text[]))`,
           [formId, ids],
         )
       ).rowCount ?? 0;
-    // A response that reappears in Google (deleted by mistake, then restored) is no longer marked removed. It stays hidden.
+    // A response that reappears in Google (deleted by mistake, then restored) is shown to its sender again.
     await client.query(
       'UPDATE submissions SET removed_from_source_at = NULL WHERE form_id = $1 AND removed_from_source_at IS NOT NULL AND google_response_id = ANY($2::text[])',
       [formId, ids],

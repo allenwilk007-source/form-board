@@ -13,6 +13,7 @@ export type FakeSource = FormsSource & {
   addQuestion(formId: string, questionId: string, title: string): void;
   renameQuestion(formId: string, questionId: string, title: string): void;
   removeQuestion(formId: string, questionId: string): void;
+  setAccepting(formId: string, open: boolean): void;
   /** The next call for this form throws this error, once. */
   failNext(formId: string, message: string): void;
 };
@@ -64,6 +65,9 @@ export function createFakeSource(): FakeSource {
     removeQuestion(id, questionId) {
       const f = form(id);
       f.items = f.items?.filter((i) => i.questionItem?.question.questionId !== questionId);
+    },
+    setAccepting(id, open) {
+      form(id).publishSettings = { publishState: { isPublished: true, isAcceptingResponses: open } };
     },
     failNext(id, message) {
       failures.set(id, message);

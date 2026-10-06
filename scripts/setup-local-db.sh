@@ -10,8 +10,8 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'fb_owner') THEN
     CREATE ROLE fb_owner LOGIN CREATEDB PASSWORD 'fb_owner_local';
   END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'web_public') THEN
-    CREATE ROLE web_public LOGIN PASSWORD 'web_public_local';
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'web_user') THEN
+    CREATE ROLE web_user LOGIN PASSWORD 'web_user_local';
   END IF;
 END $$;
 SELECT 'CREATE DATABASE form_board OWNER fb_owner'

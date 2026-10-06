@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formQuestions, normalizeResponse, type GoogleResponse } from '../src/lib/google.ts';
+import { formQuestions, isAcceptingResponses, normalizeResponse, type GoogleResponse } from '../src/lib/google.ts';
 
 describe('formQuestions', () => {
   it('lists questions in order, skips non-questions and splits grid rows', () => {
@@ -54,5 +54,21 @@ describe('normalizeResponse', () => {
 
   it('handles a response with no answers and no email', () => {
     expect(normalizeResponse(base)).toMatchObject({ respondentEmail: null, answers: {} });
+  });
+});
+
+describe('isAcceptingResponses', () => {
+  const form = { formId: 'f', info: { title: 'T' } };
+  it('is true for a published form accepting responses', () => {
+    expect(isAcceptingResponses({ ...form, publishSettings: { publishState: { isPublished: true, isAcceptingResponses: true } } })).toBe(true);
+  });
+  it('is false when the form stopped accepting responses', () => {
+    expect(isAcceptingResponses({ ...form, publishSettings: { publishState: { isPublished: true, isAcceptingResponses: false } } })).toBe(false);
+  });
+  it('is false for an unpublished form', () => {
+    expect(isAcceptingResponses({ ...form, publishSettings: { publishState: { isPublished: false, isAcceptingResponses: true } } })).toBe(false);
+  });
+  it('treats a form without publish settings as open', () => {
+    expect(isAcceptingResponses(form)).toBe(true);
   });
 });
