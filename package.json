@@ -1,0 +1,24 @@
+{
+  "name": "form-board",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "db:setup": "bash scripts/setup-local-db.sh",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts",
+    "db:seed": "node --env-file-if-exists=.env scripts/seed.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
