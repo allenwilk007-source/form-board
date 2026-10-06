@@ -14,6 +14,11 @@ export type FakeSource = FormsSource & {
   renameQuestion(formId: string, questionId: string, title: string): void;
   removeQuestion(formId: string, questionId: string): void;
   setAccepting(formId: string, open: boolean): void;
+  setEmailCollection(formId: string, type: 'DO_NOT_COLLECT' | 'VERIFIED' | 'RESPONDER_INPUT'): void;
+  /** Take a form out of (or put it back in) the list the source reports, e.g. older than the window. */
+  setListed(formId: string, listed: boolean): void;
+  /** The next listForms call throws this error, once. */
+  failNextList(message: string): void;
   /** The next call for this form throws this error, once. */
   failNext(formId: string, message: string): void;
 };
@@ -22,6 +27,8 @@ export function createFakeSource(): FakeSource {
   const forms = new Map(fakeForms.map((f) => [f.formId, structuredClone(f)]));
   const responses = new Map(Object.entries(structuredClone(fakeResponses)));
   const failures = new Map<string, string>();
+  const unlisted = new Set<string>();
+  let listFailure: string | null = null;
 
   const form = (id: string) => forms.get(id) ?? fail(`Fake form ${id} not found`);
   const list = (id: string) => responses.get(id) ?? fail(`Fake form ${id} not found`);
@@ -36,6 +43,14 @@ export function createFakeSource(): FakeSource {
   return {
     forms,
     responses,
+    async listForms() {
+      if (listFailure) {
+        const message = listFailure;
+        listFailure = null;
+        throw new Error(message);
+      }
+      return [...forms.keys()].filter((id) => !unlisted.has(id));
+    },
     async getForm(id) {
       maybeFail(id);
       return structuredClone(form(id));
@@ -68,6 +83,17 @@ export function createFakeSource(): FakeSource {
     },
     setAccepting(id, open) {
       form(id).publishSettings = { publishState: { isPublished: true, isAcceptingResponses: open } };
+    },
+    setEmailCollection(id, type) {
+      form(id).settings = { emailCollectionType: type };
+    },
+    setListed(id, listed) {
+      form(id);
+      if (listed) unlisted.delete(id);
+      else unlisted.add(id);
+    },
+    failNextList(message) {
+      listFailure = message;
     },
     failNext(id, message) {
       failures.set(id, message);

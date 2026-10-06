@@ -8,6 +8,8 @@ export type GoogleForm = {
   responderUri?: string;
   /** Absent on forms created before Google's publish settings existed. */
   publishSettings?: { publishState?: { isPublished?: boolean; isAcceptingResponses?: boolean } };
+  /** Settings › Responses › Collect email addresses. */
+  settings?: { emailCollectionType?: 'EMAIL_COLLECTION_TYPE_UNSPECIFIED' | 'DO_NOT_COLLECT' | 'VERIFIED' | 'RESPONDER_INPUT' };
   items?: GoogleItem[];
 };
 
@@ -52,6 +54,11 @@ export function isAcceptingResponses(form: GoogleForm): boolean {
   const state = form.publishSettings?.publishState;
   if (!state) return true;
   return state.isPublished === true && state.isAcceptingResponses === true;
+}
+
+/** Only Google-verified emails can be trusted to say who sent a response. Typed-in ones can't. */
+export function collectsVerifiedEmails(form: GoogleForm): boolean {
+  return form.settings?.emailCollectionType === 'VERIFIED';
 }
 
 /** Every answerable question, in form order. A grid's rows become one question each, titled "Grid / Row". */

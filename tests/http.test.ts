@@ -5,7 +5,6 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PEOPLE } from '../src/fake-google/data.ts';
 import { createFakeSource } from '../src/fake-google/source.ts';
-import { loadFormsConfig } from '../src/lib/forms-config.ts';
 import { createSessionValue, SESSION_COOKIE } from '../src/lib/session.ts';
 import { syncAll } from '../src/lib/sync.ts';
 import { OWNER_URL, USER_URL } from './db.ts';
@@ -42,7 +41,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE forms, questions, submissions, sync_runs RESTART IDENTITY CASCADE');
-  await syncAll(pool, createFakeSource(), await loadFormsConfig());
+  await syncAll(pool, createFakeSource());
 });
 
 const cookieFor = (email: string) => `${SESSION_COOKIE}=${createSessionValue(email)}`;

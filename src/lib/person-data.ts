@@ -21,7 +21,7 @@ export async function homeFor(pool: pg.Pool, email: string): Promise<{ openForms
     const openForms = (
       await db.query<OpenForm>(
         `SELECT f.id, f.title, f.responder_uri FROM forms f
-         WHERE f.accepting_responses AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.form_id = f.id)
+         WHERE f.accepting_responses AND f.listed AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.form_id = f.id)
          ORDER BY f.title`,
       )
     ).rows;

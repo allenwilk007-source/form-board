@@ -28,9 +28,9 @@ shape. Go-live must check one real form before real people use the site.
 A submission belongs to the person whose email Google **verified** on it. That needs the form's
 setting *Settings › Responses › Collect email addresses* to be **Verified**.
 
-- Google's data may not say whether an email was verified or typed in, so `config/forms.json` marks
-  each form's setting. Emails from forms not marked `emailsVerified` are never trusted: otherwise
-  anyone could type someone else's email and appear in their account.
+- The site reads each form's email setting from Google (`settings.emailCollectionType`). Emails
+  from forms not set to `VERIFIED` are never trusted: otherwise anyone could type someone else's
+  email and appear in their account.
 - Emails are compared in lower case.
 - A submission with no trusted email belongs to no one and is visible only to the owner.
 - Responses sent before a form switched to Verified have no email and stay owner-only.
@@ -50,6 +50,11 @@ setting *Settings › Responses › Collect email addresses* to be **Verified**.
 - The form's `responderUri` gives the "Fill in" link, and its publish settings say whether it is
   accepting responses. A form with no publish settings is treated as open (to confirm at go-live).
 - Sync fetches every response of each form on each run and upserts by `responseId`.
+- **Which forms:** every form the owner owns that was created in the last 60 days, listed through the
+  Drive API. Sync reads as the owner with a one-time, read-only OAuth approval (refresh token). A form
+  that drops out of the window leaves "Open forms"; people keep their past submissions.
+- Risk: Google expires the approval after 7 days while the app is in "Testing", and may restrict the
+  Drive scope for unverified apps. Sync failures, including this one, are logged in the owner area.
 
 ## Privacy by construction
 

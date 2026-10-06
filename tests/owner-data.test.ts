@@ -3,19 +3,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { HELP_FORM_ID, PEOPLE } from '../src/fake-google/data.ts';
 import { createFakeSource } from '../src/fake-google/source.ts';
 import { asUser } from '../src/lib/as-user.ts';
-import { loadFormsConfig, type FormsConfig } from '../src/lib/forms-config.ts';
 import { deleteSubmission, getSubmission, listForms, listSubmissions, PAGE_SIZE, recentSyncRuns } from '../src/lib/owner-data.ts';
 import { syncAll } from '../src/lib/sync.ts';
 import { OWNER_URL, USER_URL } from './db.ts';
 
 let pool: pg.Pool;
 let web: pg.Pool;
-let config: FormsConfig;
 
 beforeAll(async () => {
   pool = new pg.Pool({ connectionString: OWNER_URL });
   web = new pg.Pool({ connectionString: USER_URL });
-  config = await loadFormsConfig();
 });
 afterAll(async () => {
   await pool.end();
@@ -23,7 +20,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pool.query('TRUNCATE forms, questions, submissions, sync_runs RESTART IDENTITY CASCADE');
-  await syncAll(pool, createFakeSource(), config);
+  await syncAll(pool, createFakeSource());
 });
 
 const idOf = async (googleResponseId: string) => (await pool.query('SELECT id FROM submissions WHERE google_response_id = $1', [googleResponseId])).rows[0].id as string;
@@ -102,7 +99,7 @@ describe('deleteSubmission', () => {
     expect(s.deleted_at).toBeInstanceOf(Date);
     const alexSees = () => asUser(web, PEOPLE.alex, async (db) => (await db.query('SELECT id FROM submissions WHERE id = $1', [id])).rowCount);
     expect(await alexSees()).toBe(0);
-    await syncAll(pool, createFakeSource(), config);
+    await syncAll(pool, createFakeSource());
     expect((await getSubmission(pool, id))!.answers).toEqual({});
     expect(await alexSees()).toBe(0);
   });

@@ -1,20 +1,18 @@
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { FEEDBACK_FORM_ID, fakeResponses, IDEAS_FORM_ID, PEOPLE } from '../src/fake-google/data.ts';
+import { FEEDBACK_FORM_ID, fakeForms, fakeResponses, IDEAS_FORM_ID, PEOPLE } from '../src/fake-google/data.ts';
+import { collectsVerifiedEmails } from '../src/lib/google.ts';
 import { createFakeSource } from '../src/fake-google/source.ts';
 import { asUser } from '../src/lib/as-user.ts';
-import { loadFormsConfig, parseFormsConfig, type FormsConfig } from '../src/lib/forms-config.ts';
 import { syncAll } from '../src/lib/sync.ts';
 import { OWNER_URL, USER_URL } from './db.ts';
 
 let owner: pg.Pool;
 let web: pg.Pool;
-let config: FormsConfig;
 
 beforeAll(async () => {
   owner = new pg.Pool({ connectionString: OWNER_URL });
   web = new pg.Pool({ connectionString: USER_URL, max: 1 }); // one connection, so reuse between requests is exercised
-  config = await loadFormsConfig();
 });
 afterAll(async () => {
   await owner.end();
@@ -22,13 +20,14 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await owner.query('TRUNCATE forms, questions, submissions, sync_runs RESTART IDENTITY CASCADE');
-  await syncAll(owner, createFakeSource(), config);
+  await syncAll(owner, createFakeSource());
 });
 
-/** What each person should see, worked out from the fake data and config directly (not from the database). */
+/** What each person should see, worked out from the fake data directly (not from the database). */
+const verifiedForms = new Set(fakeForms.filter(collectsVerifiedEmails).map((f) => f.formId));
 const expectedIds = (email: string) =>
   Object.entries(fakeResponses)
-    .filter(([formId]) => config.forms[formId].emailsVerified)
+    .filter(([formId]) => verifiedForms.has(formId))
     .flatMap(([, rs]) => rs.filter((r) => r.respondentEmail?.toLowerCase() === email).map((r) => r.responseId))
     .sort();
 const visibleIds = (email: string) =>
@@ -169,18 +168,10 @@ describe('removal requests', () => {
   });
 });
 
-describe('config', () => {
-  it.each([
-    ['not an object', null],
-    ['no forms', {}],
-    ['emailsVerified missing', { forms: { f: {} } }],
-    ['emailsVerified as text', { forms: { f: { emailsVerified: 'yes' } } }],
-  ])('rejects a malformed config: %s', (_, raw) => {
-    expect(() => parseFormsConfig(raw)).toThrow(/config\/forms.json is invalid/);
-  });
-
-  it('matches the fake forms: feedback emails untrusted, the rest trusted', () => {
-    expect(config.forms[FEEDBACK_FORM_ID].emailsVerified).toBe(false);
-    expect(config.forms[IDEAS_FORM_ID].emailsVerified).toBe(true);
+describe('email trust', () => {
+  it('comes from each form\'s own setting: feedback collects typed emails, the rest verified ones', () => {
+    expect(verifiedForms.has(FEEDBACK_FORM_ID)).toBe(false);
+    expect(verifiedForms.has(IDEAS_FORM_ID)).toBe(true);
+    expect(verifiedForms.size).toBe(3);
   });
 });

@@ -1,9 +1,0 @@
-{
-  "_comment": "The Google Forms to sync, by form ID. Set emailsVerified to true only if the form's Settings > Responses > Collect email addresses is 'Verified'. Emails from other forms are never trusted, so their submissions are visible only to the owner.",
-  "forms": {
-    "fake-form-ideas": { "emailsVerified": true },
-    "fake-form-volunteer": { "emailsVerified": true },
-    "fake-form-feedback": { "emailsVerified": false },
-    "fake-form-help": { "emailsVerified": true }
-  }
-}
