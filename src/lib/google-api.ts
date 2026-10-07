@@ -1,6 +1,6 @@
 // The real Google source: reads the owner's forms with their saved Google approval (an OAuth refresh
 // token). Read-only scopes only. Tokens never appear in errors or logs.
-import type { GoogleForm, GoogleResponse } from './google.ts';
+import { isAcceptingResponses, type GoogleForm, type GoogleResponse } from './google.ts';
 import type { FormsSource } from './sync.ts';
 
 /** The read-only permissions the owner approves once. */
@@ -10,7 +10,11 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/forms.responses.readonly', // read the responses
 ];
 
-/** Forms changed (in Google Drive's sense) within this many days are listed. */
+/**
+ * How far back closed forms stay listed: a form changed (in Google Drive's sense) within this many
+ * days is listed whatever its state. A form still accepting responses is listed however old it is,
+ * so this window only decides how long a form lingers after it closes.
+ */
 export const FORM_WINDOW_DAYS = 60;
 
 type Options = {
@@ -53,25 +57,46 @@ export function createGoogleSource(opts: Options): FormsSource {
     return (await res.json()) as T;
   }
 
+  const getForm = (id: string) => get<GoogleForm>(`https://forms.googleapis.com/v1/forms/${encodeURIComponent(id)}`);
+
   return {
+    /**
+     * Every form the owner owns that is either still accepting responses, whatever its age, or was
+     * changed in the last FORM_WINDOW_DAYS days. Drive cannot say whether a form is open — that
+     * lives in the Forms API — so forms older than the window are read individually to find out.
+     */
     async listForms() {
-      const since = new Date(now() - FORM_WINDOW_DAYS * 864e5).toISOString();
-      const q = `mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false and modifiedTime > '${since}'`;
-      const ids: string[] = [];
+      const since = now() - FORM_WINDOW_DAYS * 864e5;
+      const q = `mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false`;
+      const files: { id: string; modifiedTime?: string }[] = [];
       let pageToken: string | undefined;
       do {
-        const params = new URLSearchParams({ q, fields: 'nextPageToken, files(id)', pageSize: '100', orderBy: 'modifiedTime desc' });
+        const params = new URLSearchParams({ q, fields: 'nextPageToken, files(id,modifiedTime)', pageSize: '100', orderBy: 'modifiedTime desc' });
         if (pageToken) params.set('pageToken', pageToken);
-        const page = await get<{ files?: { id: string }[]; nextPageToken?: string }>(`https://www.googleapis.com/drive/v3/files?${params}`);
-        ids.push(...(page.files ?? []).map((f) => f.id));
+        const page = await get<{ files?: { id: string; modifiedTime?: string }[]; nextPageToken?: string }>(`https://www.googleapis.com/drive/v3/files?${params}`);
+        files.push(...(page.files ?? []));
         pageToken = page.nextPageToken;
       } while (pageToken);
+
+      const ids: string[] = [];
+      for (const f of files) {
+        // A missing or unparseable date counts as old, so the question falls to "is it open?".
+        if (Date.parse(f.modifiedTime ?? '') > since) {
+          ids.push(f.id);
+          continue;
+        }
+        try {
+          if (isAcceptingResponses(await getForm(f.id))) ids.push(f.id);
+        } catch {
+          // Listed anyway: a form we cannot read should fail loudly in the sync log rather than
+          // disappear from the site as though the owner had deleted it.
+          ids.push(f.id);
+        }
+      }
       return ids;
     },
 
-    getForm(id) {
-      return get<GoogleForm>(`https://forms.googleapis.com/v1/forms/${encodeURIComponent(id)}`);
-    },
+    getForm,
 
     async listResponses(id) {
       const all: GoogleResponse[] = [];

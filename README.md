@@ -20,7 +20,13 @@ npm test             # recreates a separate test database each run
 
 ## Which forms appear
 
-Every form you own that was changed in the last 60 days (Google Drive's "last modified" date). A submission shows in its sender's
+Every form you own that is **still accepting responses**, however long ago you last touched it, plus
+any form **changed in the last 60 days** (Google Drive's "last modified" date) even if it has closed.
+So an open form never disappears, a newly made one appears at the next sync, and a closed one stays
+listed for 60 days afterwards and then drops off "Open forms".
+
+Dropping off the list never hides anybody's answers: people keep seeing their own submissions to a
+form that is no longer listed. A submission shows in its sender's
 "My submissions" only if the form's *Settings › Responses › Collect email addresses* is **Verified**;
 the site reads that setting from Google. Typed-in emails are never trusted.
 
