@@ -5,7 +5,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PEOPLE } from '../src/fake-google/data.ts';
 import { createFakeSource } from '../src/fake-google/source.ts';
-import { createSessionValue, SESSION_COOKIE } from '../src/lib/session.ts';
+import { createSessionValue, createSignInValue, readSignInValue, SESSION_COOKIE, SIGNIN_COOKIE } from '../src/lib/session.ts';
 import { syncAll } from '../src/lib/sync.ts';
 import { OWNER_URL, USER_URL } from './db.ts';
 
@@ -13,6 +13,8 @@ const PORT = 3917;
 const BASE = `http://localhost:${PORT}`;
 const OWNER = 'allenwilk007@gmail.com';
 const SECRET = 'http-test-secret-that-is-at-least-32-characters';
+const CLIENT_ID = 'client-123.apps.googleusercontent.com';
+const REDIRECT_URI = `http://localhost:${PORT}/api/auth/google/callback`;
 
 let server: ChildProcess;
 let pool: pg.Pool;
@@ -21,7 +23,25 @@ beforeAll(async () => {
   process.env.SESSION_SECRET = SECRET; // so this file can mint cookies the server accepts
   pool = new pg.Pool({ connectionString: OWNER_URL });
   server = spawn('npx', ['next', 'start', '-p', String(PORT)], {
-    env: { ...process.env, NODE_ENV: 'production', DATABASE_URL: OWNER_URL, USER_DATABASE_URL: USER_URL, SESSION_SECRET: SECRET, OWNER_EMAILS: OWNER, DEV_SIGNIN: '1' },
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      DATABASE_URL: OWNER_URL,
+      USER_DATABASE_URL: USER_URL,
+      SESSION_SECRET: SECRET,
+      OWNER_EMAILS: OWNER,
+      DEV_SIGNIN: '1',
+      // Pinned, not inherited: with FORMS_SOURCE=google in the surrounding environment these tests
+      // would sync the owner's real forms over the network and never match the fake data they assert.
+      FORMS_SOURCE: 'fake',
+      // Enough for the site to offer Google sign-in. No real approval is ever exchanged here, and
+      // blanking the owner's refresh token means a mistake above fails loudly instead of quietly
+      // reading real data.
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      GOOGLE_CLIENT_SECRET: 'secret-xyz',
+      GOOGLE_REDIRECT_URI: REDIRECT_URI,
+      GOOGLE_REFRESH_TOKEN: '',
+    },
     stdio: 'ignore',
     detached: true, // own process group, so afterAll can stop npx and the server it starts
   });
@@ -143,6 +163,97 @@ describe('sign-in', () => {
     const res = await post('/api/dev-signin', { body: new URLSearchParams({ email: OWNER }) });
     expect(res.status).toBe(404);
     expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('offers Google sign-in to a signed-out visitor', async () => {
+    const html = await (await get('/')).text();
+    expect(html).toContain('action="/api/auth/google/start"');
+    expect(html).toContain('Sign in with Google');
+  });
+
+  it('starts sign-in by sending the person to Google, remembering the attempt in a cookie', async () => {
+    const res = await post('/api/auth/google/start');
+    expect(res.status).toBe(303);
+    const to = new URL(res.headers.get('location')!);
+    expect(to.origin + to.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(to.searchParams.get('scope')).toBe('openid email');
+    expect(to.searchParams.get('client_id')).toBe(CLIENT_ID);
+    expect(to.searchParams.get('redirect_uri')).toBe(REDIRECT_URI);
+    // The visitor is never asked for access to the owner's files.
+    expect(to.toString()).not.toMatch(/drive|forms\.body|forms\.responses/);
+    // The state in the cookie is the one sent to Google, and the cookie is not readable by scripts.
+    const setCookie = res.headers.get('set-cookie')!;
+    expect(setCookie).toContain(`${SIGNIN_COOKIE}=`);
+    expect(setCookie).toMatch(/HttpOnly/i);
+    const value = decodeURIComponent(setCookie.split(`${SIGNIN_COOKIE}=`)[1].split(';')[0]);
+    expect(readSignInValue(value)).toEqual({ state: to.searchParams.get('state'), nonce: to.searchParams.get('nonce') });
+  });
+
+  it('gives every sign-in attempt its own state and nonce', async () => {
+    const first = new URL((await post('/api/auth/google/start')).headers.get('location')!).searchParams;
+    const second = new URL((await post('/api/auth/google/start')).headers.get('location')!).searchParams;
+    expect(first.get('state')).not.toBe(second.get('state'));
+    expect(first.get('nonce')).not.toBe(second.get('nonce'));
+    expect(first.get('state')!.length).toBeGreaterThanOrEqual(32);
+  });
+
+  it('refuses to start a sign-in asked for by another site', async () => {
+    const res = await post('/api/auth/google/start', { origin: 'https://evil.example' });
+    expect(res.status).toBe(403);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  describe('the callback from Google', () => {
+    const callback = (query: string, cookie?: string) =>
+      fetch(`${BASE}/api/auth/google/callback?${query}`, { redirect: 'manual', headers: cookie ? { cookie } : {} });
+    const signInCookie = (state: string, nonce = 'nonce-1') => `${SIGNIN_COOKIE}=${encodeURIComponent(createSignInValue(state, nonce))}`;
+    const signedIn = (res: Response) => (res.headers.get('set-cookie') ?? '').includes(`${SESSION_COOKIE}=`);
+
+    it('refuses a callback with no sign-in under way', async () => {
+      const res = await callback('code=c&state=st-1');
+      expect(res.status).toBe(403);
+      expect(signedIn(res)).toBe(false);
+    });
+
+    it('refuses a state that does not match the one it started with', async () => {
+      const res = await callback('code=c&state=someone-elses-state', signInCookie('st-1'));
+      expect(res.status).toBe(403);
+      expect(signedIn(res)).toBe(false);
+    });
+
+    it('refuses a callback with no state at all', async () => {
+      const res = await callback('code=c', signInCookie('st-1'));
+      expect(res.status).toBe(403);
+      expect(signedIn(res)).toBe(false);
+    });
+
+    it('refuses a matching state that brings no code', async () => {
+      const res = await callback('state=st-1', signInCookie('st-1'));
+      expect(res.status).toBe(403);
+      expect(signedIn(res)).toBe(false);
+    });
+
+    it('refuses a sign-in cookie signed with the wrong secret', async () => {
+      const [payload] = createSignInValue('st-1', 'nonce-1').split('.');
+      const res = await callback('code=c&state=st-1', `${SIGNIN_COOKIE}=${payload}.forged-signature`);
+      expect(res.status).toBe(403);
+      expect(signedIn(res)).toBe(false);
+    });
+
+    it('sends someone who cancelled back to the sign-in page, not signed in', async () => {
+      const res = await callback('error=access_denied', signInCookie('st-1'));
+      expect(res.status).toBe(303);
+      expect(res.headers.get('location')).toMatch(/\/\?signin=denied$/);
+      expect(signedIn(res)).toBe(false);
+    });
+
+    it('clears the sign-in cookie whatever the outcome, so a state is good for one try only', async () => {
+      const cookie = signInCookie('st-1');
+      const first = await callback('code=c&state=wrong', cookie);
+      expect(first.headers.get('set-cookie')).toMatch(new RegExp(`${SIGNIN_COOKIE}=;.*(Max-Age=0|Expires=Thu, 01 Jan 1970)`, 'i'));
+      // The browser would have dropped it; a replay therefore arrives with nothing under way.
+      expect((await callback('code=c&state=st-1')).status).toBe(403);
+    });
   });
 
   it('signing out clears the session cookie', async () => {

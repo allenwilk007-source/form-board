@@ -46,7 +46,11 @@ all in the browser, signed in to Google as the owner.
 
 **3. Create the client**
 1. Go to **Clients** (or **Credentials**) › **Create client** › **Web application**, name `form-board`.
-2. Under **Authorized redirect URIs**, add `https://developers.google.com/oauthplayground`. Create it.
+2. Under **Authorized redirect URIs**, add both of these, then create it:
+   - `https://developers.google.com/oauthplayground` — for step 4 below, to get your refresh token.
+   - `http://localhost:3000/api/auth/google/callback` — where people land after signing in. Add your
+     real address (`https://your-site/api/auth/google/callback`) too once you have one; Google matches
+     these character for character, so a trailing slash or `http` for `https` will be rejected.
 3. Keep the **Client ID** and **Client secret** private, like a password.
 
 **4. Approve, and get the refresh token**
@@ -59,7 +63,7 @@ all in the browser, signed in to Google as the owner.
 
 **5. Hand it to the site.** Never paste these into a chat or commit them. In the build environment's
 settings (or Vercel's), add environment variables: `FORMS_SOURCE=google`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. Then run the read-only check:
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GOOGLE_REDIRECT_URI`. Then run the read-only check:
 
 ```bash
 npm run google:check   # lists your forms, open or closed, email setting, response count; changes nothing
@@ -67,3 +71,19 @@ npm run google:check   # lists your forms, open or closed, email setting, respon
 
 If Google ever stops accepting the approval, sync fails with a message saying so in the owner area's
 sync log; repeat step 4 to reconnect.
+
+## Sign in with Google
+
+Visitors sign in with their Google account. The site asks them for `openid email` and nothing else:
+it learns the address Google has verified for them, and never gets access to their Drive or their
+forms. That is a separate thing from your own approval above, which is what lets sync read *your*
+forms — the two share a Google client but not a single scope.
+
+Sign-in appears once `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI` are all
+set; until then the sign-in page says so. To try it locally, `npm run dev` and open
+http://localhost:3000 — the address must be exactly `localhost:3000`, because that is what is
+registered with Google.
+
+A submission is still only matched to the person who sent it when the form collects **Verified**
+emails (see "Which forms appear"). Signing in does not change that: an address Google verified at
+sign-in says who the visitor is, not who filled in a form that never asked.
