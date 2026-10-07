@@ -1,6 +1,7 @@
 // The real Google source: reads the owner's forms with their saved Google approval (an OAuth refresh
 // token). Read-only scopes only. Tokens never appear in errors or logs.
 import { isAcceptingResponses, type GoogleForm, type GoogleResponse } from './google.ts';
+import { createGet, createTokenSource } from './google-token.ts';
 import type { FormsSource } from './sync.ts';
 
 /** The read-only permissions the owner approves once. */
@@ -28,34 +29,7 @@ type Options = {
 export function createGoogleSource(opts: Options): FormsSource {
   const doFetch = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
-  let token: { value: string; expires: number } | null = null;
-
-  async function accessToken(): Promise<string> {
-    if (token && token.expires > now() + 60_000) return token.value;
-    const res = await doFetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: opts.clientId, client_secret: opts.clientSecret, refresh_token: opts.refreshToken, grant_type: 'refresh_token' }),
-    });
-    const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
-    if (!res.ok || !body.access_token) {
-      const why = body.error === 'invalid_grant'
-        ? 'Google no longer accepts the saved approval (it expired or was revoked). Reconnect Google in the owner area.'
-        : `${body.error ?? res.status}${body.error_description ? `: ${body.error_description}` : ''}`;
-      throw new Error(`Google sign-in for sync failed: ${why}`);
-    }
-    token = { value: body.access_token, expires: now() + (body.expires_in ?? 3600) * 1000 };
-    return token.value;
-  }
-
-  async function get<T>(url: string): Promise<T> {
-    const res = await doFetch(url, { headers: { authorization: `Bearer ${await accessToken()}` } });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: { message?: string; status?: string } };
-      throw new Error(`Google API ${res.status} for ${new URL(url).pathname}: ${body.error?.message ?? body.error?.status ?? res.statusText}`.slice(0, 500));
-    }
-    return (await res.json()) as T;
-  }
+  const get = createGet(createTokenSource({ ...opts, fetch: doFetch, now }), doFetch);
 
   const getForm = (id: string) => get<GoogleForm>(`https://forms.googleapis.com/v1/forms/${encodeURIComponent(id)}`);
 

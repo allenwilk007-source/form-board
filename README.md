@@ -78,6 +78,42 @@ npm run google:check   # lists your forms, open or closed, email setting, respon
 If Google ever stops accepting the approval, sync fails with a message saying so in the owner area's
 sync log; repeat step 4 to reconnect.
 
+## Forms you applied to
+
+The other half of the site: forms somebody *else* made, that you were sent or have answered.
+
+Google has no way to ask which forms a person has responded to. The Forms API only answers for
+forms you own, and Google Forms keeps no such list. The one trace is your mail, so that is what is
+read — for the **link** a message carries, never its wording, so it works in any language and
+survives Google rewording its own emails.
+
+```bash
+npm run gmail:check   # lists what your mail says; stores nothing
+npm run gmail:scan    # the same, and stores it
+```
+
+Each form comes back as one of:
+
+- **found** — a form reached you. Whether you answered it is not known.
+- **submitted** — you answered it, proved by a link back to your own response ("edit your response"),
+  which only exists once a response has been sent.
+
+There is deliberately no "opened". Nothing in a mailbox can say whether you opened a form, and a
+receipt only exists after you have answered. Catching that needs a browser extension, not mail.
+
+**What this cannot find:** a form nobody emailed you, and a form you answered whose owner left
+*"Send responders a copy of their response"* switched off — that leaves no trace anywhere, and no
+amount of scanning recovers it. Run `npm run gmail:check` before relying on this: if it finds
+nothing, this approach cannot work for you.
+
+**To switch it on**, redo the approval in "Connect Google" above, adding a fourth scope:
+
+- `https://www.googleapis.com/auth/gmail.readonly`
+
+Google counts that a **restricted** scope. An unverified app is capped at 100 users for life, and
+going beyond that needs Google verification plus an annual third-party security assessment. For one
+mailbox — yours — the cap is not a problem, but know that it exists before building on it.
+
 ## Sign in with Google
 
 Visitors sign in with their Google account. The site asks them for `openid email` and nothing else:

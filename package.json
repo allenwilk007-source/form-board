@@ -15,7 +15,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "google:check": "node --env-file-if-exists=.env scripts/google-check.ts"
+    "google:check": "node --env-file-if-exists=.env scripts/google-check.ts",
+    "gmail:check": "node --env-file-if-exists=.env scripts/gmail-check.ts",
+    "gmail:scan": "node --env-file-if-exists=.env scripts/gmail-scan.ts"
   },
   "dependencies": {
     "jose": "^6.2.12",
