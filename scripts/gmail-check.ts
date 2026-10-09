@@ -21,7 +21,7 @@ try {
 }
 
 console.log(`Reading ${address} for mail mentioning a Google Form (at most ${max} messages).\n`);
-const messages = await mailbox.search(FORM_MAIL_QUERY, max);
+const { messages, complete } = await mailbox.search(FORM_MAIL_QUERY, max);
 const found = messages.flatMap(applicationsIn);
 
 if (!messages.length) {
@@ -45,6 +45,9 @@ for (const a of found) {
 console.table([...byForm.values()].sort((a, b) => b.when.localeCompare(a.when)));
 const submitted = [...byForm.values()].filter((r) => r.status === 'submitted').length;
 console.log(`\n${messages.length} message(s) mention a form; ${byForm.size} distinct form(s); ${submitted} known to have been sent.`);
+if (!complete) {
+  console.log(`Stopped at ${max} messages; older mail was not read. Pass a higher number to read further, e.g. npm run gmail:check -- ${max * 4}`);
+}
 if (submitted < byForm.size) {
   console.log('The rest reached you but left no receipt, so whether you answered them cannot be told from mail.');
 }

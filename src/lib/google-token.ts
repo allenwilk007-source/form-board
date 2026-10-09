@@ -15,9 +15,18 @@ export function createTokenSource(opts: TokenOptions): () => Promise<string> {
   const doFetch = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
   let token: { value: string; expires: number } | null = null;
+  // Callers working in parallel share one refresh instead of each asking Google for a token.
+  let pending: Promise<string> | null = null;
 
-  return async function accessToken(): Promise<string> {
-    if (token && token.expires > now() + 60_000) return token.value;
+  return function accessToken(): Promise<string> {
+    if (token && token.expires > now() + 60_000) return Promise.resolve(token.value);
+    pending ??= refresh().finally(() => {
+      pending = null;
+    });
+    return pending;
+  };
+
+  async function refresh(): Promise<string> {
     const res = await doFetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -33,7 +42,7 @@ export function createTokenSource(opts: TokenOptions): () => Promise<string> {
     }
     token = { value: body.access_token, expires: now() + (body.expires_in ?? 3600) * 1000 };
     return token.value;
-  };
+  }
 }
 
 /** A JSON GET against a Google API with the owner's approval. Throws with the API's own complaint. */

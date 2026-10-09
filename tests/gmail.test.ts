@@ -1,7 +1,7 @@
 // The Gmail reader, against a pretend Gmail. Nothing here touches a real mailbox.
 import { describe, expect, it } from 'vitest';
 import { applicationsIn } from '../src/lib/applications.ts';
-import { createMailbox, FORM_MAIL_QUERY, readMessage } from '../src/lib/gmail.ts';
+import { createMailbox, FORM_MAIL_QUERY, readMessage, receivedAfter } from '../src/lib/gmail.ts';
 
 const PUBLISHED = '1FAIpQLSdsw98ypAQdRyxYlr5z5ysy5EwEyiGVMEGMyF5LMINzp4pT3g';
 const TOKEN = 'https://oauth2.googleapis.com/token';
@@ -91,8 +91,9 @@ describe('searching the mailbox', () => {
       [LIST]: () => ({ body: { messages: [{ id: 'm1' }] } }),
       [MESSAGE]: () => ({ body: msg('m1', 'Apply', `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform`) }),
     });
-    const found = await mailbox(g.fetch).search(FORM_MAIL_QUERY);
+    const { messages: found, complete } = await mailbox(g.fetch).search(FORM_MAIL_QUERY);
     expect(found).toHaveLength(1);
+    expect(complete).toBe(true);
     expect(new URL(g.calls[1]).searchParams.get('q')).toBe('"docs.google.com/forms" OR "forms.gle"');
     // Short links count too: a form reached by forms.gle is still a form.
     expect(FORM_MAIL_QUERY).toContain('forms.gle');
@@ -104,21 +105,88 @@ describe('searching the mailbox', () => {
       [LIST]: (url) => (url.searchParams.get('pageToken') ? { body: { messages: [{ id: 'm3' }] } } : { body: { messages: [{ id: 'm1' }, { id: 'm2' }], nextPageToken: 'p2' } }),
       [MESSAGE]: (url) => ({ body: msg(url.pathname.split('/').pop()!.split('?')[0], 'S', 'no links here') }),
     });
-    expect((await mailbox(g.fetch).search('q')).map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    const { messages, complete } = await mailbox(g.fetch).search('q');
+    expect(messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    expect(complete).toBe(true);
   });
 
-  it('stops at the cap instead of reading a whole mailbox', async () => {
+  it('stops at the cap instead of reading a whole mailbox, and says it stopped short', async () => {
     const g = fakeGmail({
       [TOKEN]: okToken,
       [LIST]: () => ({ body: { messages: [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }], nextPageToken: 'more' } }),
       [MESSAGE]: (url) => ({ body: msg(url.pathname.split('/').pop()!.split('?')[0], 'S', 'x') }),
     });
-    expect(await mailbox(g.fetch).search('q', 2)).toHaveLength(2);
+    const { messages, complete } = await mailbox(g.fetch).search('q', 2);
+    expect(messages).toHaveLength(2);
+    // The oldest mail went unread: anything keeping a bookmark must not move past it.
+    expect(complete).toBe(false);
+  });
+
+  it('counts a search that exactly fills the cap, with nothing beyond it, as complete', async () => {
+    const g = fakeGmail({
+      [TOKEN]: okToken,
+      [LIST]: () => ({ body: { messages: [{ id: 'm1' }, { id: 'm2' }] } }),
+      [MESSAGE]: (url) => ({ body: msg(url.pathname.split('/').pop()!.split('?')[0], 'S', 'x') }),
+    });
+    expect((await mailbox(g.fetch).search('q', 2)).complete).toBe(true);
+  });
+
+  it('reads messages several at a time but hands them back newest first, as Gmail listed them', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const ids = Array.from({ length: 20 }, (_, i) => `m${i}`);
+    const base = fakeGmail({ [TOKEN]: okToken, [LIST]: () => ({ body: { messages: ids.map((id) => ({ id })) } }) });
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.startsWith(MESSAGE) || url.startsWith(LIST)) return base.fetch(input, init);
+      inFlight++;
+      most = Math.max(most, inFlight);
+      const id = new URL(url).pathname.split('/').pop()!;
+      // Later messages answer sooner, so finishing order is the reverse of listing order.
+      await new Promise((r) => setTimeout(r, 40 - Number(id.slice(1)) * 2));
+      inFlight--;
+      return new Response(JSON.stringify(msg(id, `S ${id}`, 'x')), { headers: { 'content-type': 'application/json' } });
+    }) as typeof globalThis.fetch;
+    const { messages } = await mailbox(fetch).search('q');
+    expect(messages.map((m) => m.id)).toEqual(ids);
+    expect(most).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(8);
+  });
+
+  it('stops reading once one message fails, rather than fetching the rest only to throw them away', async () => {
+    // One bad message among many good ones: the scan has failed, so the others are wasted effort.
+    const g = fakeGmail({
+      [TOKEN]: okToken,
+      [LIST]: () => ({ body: { messages: Array.from({ length: 200 }, (_, i) => ({ id: `m${i}` })) } }),
+      [MESSAGE]: (url) =>
+        url.pathname.endsWith('/m0')
+          ? { status: 500, body: { error: { message: 'Backend Error' } } }
+          : { body: msg(url.pathname.split('/').pop()!, 'S', 'x') },
+    });
+    await expect(mailbox(g.fetch).search('q')).rejects.toThrow(/Backend Error/);
+    // The search rejects as soon as the first message fails, but workers still running could go on
+    // fetching behind it. Let them finish whatever they would do before counting.
+    await new Promise((r) => setTimeout(r, 100));
+    // A request already under way when the failure lands cannot be recalled, and a quick worker may
+    // start one more before it hears. So: a couple of rounds of the eight workers, not two hundred.
+    const fetched = g.calls.filter((c) => c.startsWith(MESSAGE)).length;
+    expect(fetched).toBeLessThanOrEqual(16);
+    expect(fetched).toBeLessThan(200);
+  });
+
+  it('asks Google for one token however many messages are read at once', async () => {
+    const g = fakeGmail({
+      [TOKEN]: okToken,
+      [LIST]: () => ({ body: { messages: Array.from({ length: 12 }, (_, i) => ({ id: `m${i}` })) } }),
+      [MESSAGE]: (url) => ({ body: msg(url.pathname.split('/').pop()!, 'S', 'x') }),
+    });
+    await mailbox(g.fetch).search('q');
+    expect(g.calls.filter((c) => c.startsWith(TOKEN))).toHaveLength(1);
   });
 
   it('copes with a search that matches nothing', async () => {
     const g = fakeGmail({ [TOKEN]: okToken, [LIST]: () => ({ body: {} }) });
-    expect(await mailbox(g.fetch).search('q')).toEqual([]);
+    expect(await mailbox(g.fetch).search('q')).toEqual({ messages: [], complete: true });
   });
 
   it('reports the address of the mailbox it is reading', async () => {
@@ -138,6 +206,17 @@ describe('searching the mailbox', () => {
     const g = fakeGmail({ [TOKEN]: () => ({ status: 400, body: { error: 'invalid_grant' } }) });
     await expect(mailbox(g.fetch).search('q')).rejects.toThrow(/no longer accepts the saved approval/);
     await expect(mailbox(g.fetch).search('q')).rejects.not.toThrow(/secret-xyz/);
+  });
+});
+
+describe('narrowing a search to recent mail', () => {
+  it('adds the date as Unix seconds, which Gmail does not shift into the account\'s time zone', () => {
+    expect(receivedAfter('"x"', new Date('2026-10-01T00:00:00Z'))).toBe('("x") after:1790812800');
+  });
+
+  it('brackets the original query so its OR cannot swallow the date', () => {
+    // Without brackets, `a OR b after:N` reads as `a OR (b after:N)`, and every old "a" comes back.
+    expect(receivedAfter(FORM_MAIL_QUERY, new Date(0))).toBe('("docs.google.com/forms" OR "forms.gle") after:0');
   });
 });
 

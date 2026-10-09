@@ -92,6 +92,12 @@ npm run gmail:check   # lists what your mail says; stores nothing
 npm run gmail:scan    # the same, and stores it
 ```
 
+The first `gmail:scan` reads every matching message (up to 500; `npm run gmail:scan -- 2000` reads
+more). After that it remembers how far it got and only fetches mail that arrived since, with a day
+of overlap, so a routine run is a handful of requests. If a scan hits its cap before reaching the
+oldest matching mail it says so and does not move on, so nothing is skipped: run it once with a
+bigger number. `npm run gmail:scan -- --full` reads everything again.
+
 Each form comes back as one of:
 
 - **found** — a form reached you. Whether you answered it is not known.

@@ -1,7 +1,7 @@
 // Turning the owner's mail into a list of forms they were sent or have answered.
 import type { Queryable } from './db.ts';
 import { formLinks, type FormLink } from './form-links.ts';
-import { FORM_MAIL_QUERY, type Mailbox, type MailMessage } from './gmail.ts';
+import { FORM_MAIL_QUERY, receivedAfter, type Mailbox, type MailMessage } from './gmail.ts';
 
 /**
  * How far a form has got.
@@ -47,10 +47,43 @@ export function applicationsIn(message: MailMessage): Application[] {
   }));
 }
 
-/** Everything the mailbox can say about forms, newest mail first. Reads only; stores nothing. */
-export async function scanMailbox(mailbox: Mailbox, { query = FORM_MAIL_QUERY, max = 500 } = {}): Promise<Application[]> {
-  const messages = await mailbox.search(query, max);
-  return messages.flatMap(applicationsIn);
+/**
+ * Mail about the same moment can be dated slightly differently by Gmail's search and by the
+ * message itself. Re-reading a day of overlap costs a few messages; missing one costs an
+ * application. Re-reading is harmless because rows are keyed on the message.
+ */
+export const RESCAN_OVERLAP_MS = 864e5;
+
+export type Scan = { found: Application[]; messages: number; complete: boolean };
+
+/**
+ * Everything the mailbox can say about forms. With `since`, only mail received after it (less the
+ * overlap) is fetched. Reads only; stores nothing.
+ */
+export async function scanMailbox(
+  mailbox: Mailbox,
+  { query = FORM_MAIL_QUERY, max = 500, since }: { query?: string; max?: number; since?: Date | null } = {},
+): Promise<Scan> {
+  const q = since ? receivedAfter(query, new Date(since.getTime() - RESCAN_OVERLAP_MS)) : query;
+  const { messages, complete } = await mailbox.search(q, max);
+  return { found: messages.flatMap(applicationsIn), messages: messages.length, complete };
+}
+
+/** Up to when this mailbox has been fully read, or null if it never has. */
+export async function readThrough(db: Queryable, personEmail: string): Promise<Date | null> {
+  return (await db.query<{ read_through: Date }>('SELECT read_through FROM mail_scans WHERE person_email = $1', [personEmail.toLowerCase()])).rows[0]?.read_through ?? null;
+}
+
+/**
+ * Records that every matching message before `through` has been read. Never moves backwards, so
+ * a slow scan finishing after a quicker later one cannot undo it.
+ */
+export async function markReadThrough(db: Queryable, personEmail: string, through: Date): Promise<void> {
+  await db.query(
+    `INSERT INTO mail_scans (person_email, read_through) VALUES ($1, $2)
+     ON CONFLICT (person_email) DO UPDATE SET read_through = GREATEST(mail_scans.read_through, EXCLUDED.read_through), scanned_at = now()`,
+    [personEmail.toLowerCase(), through],
+  );
 }
 
 /**

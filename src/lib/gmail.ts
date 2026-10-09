@@ -27,12 +27,25 @@ export type MailMessage = {
 
 type Options = TokenOptions & { fetch?: typeof fetch };
 
+export type SearchResult = {
+  /** Newest first. */
+  messages: MailMessage[];
+  /**
+   * False when the cap cut the search short. Gmail returns newest first, so what was left out is
+   * the *oldest* mail — anything remembering how far it has read must not move past it.
+   */
+  complete: boolean;
+};
+
 export type Mailbox = {
   /** The address of the mailbox being read, as Google reports it. */
   address(): Promise<string>;
-  /** Messages matching a Gmail search, newest first. `max` caps how many are fetched. */
-  search(query: string, max?: number): Promise<MailMessage[]>;
+  /** Messages matching a Gmail search. `max` caps how many are fetched. */
+  search(query: string, max?: number): Promise<SearchResult>;
 };
+
+/** Messages fetched at once. Gmail allows far more per user; this keeps a first scan quick without being rude. */
+const PARALLEL = 8;
 
 type RawPart = { mimeType?: string; body?: { data?: string }; parts?: RawPart[] };
 type RawMessage = { id: string; internalDate?: string; payload?: RawPart & { headers?: { name: string; value: string }[] } };
@@ -57,9 +70,13 @@ export function createMailbox(opts: Options): Mailbox {
         pageToken = page.nextPageToken;
       } while (pageToken && ids.length < max);
 
-      const out: MailMessage[] = [];
-      for (const id of ids.slice(0, max)) out.push(readMessage(await get<RawMessage>(`${API}/messages/${encodeURIComponent(id)}?format=full`)));
-      return out;
+      // More pages left, or more ids than the cap allows: the oldest matches were not read.
+      const complete = !pageToken && ids.length <= max;
+      const wanted = ids.slice(0, max);
+      const messages = await inOrder(wanted, PARALLEL, async (id) =>
+        readMessage(await get<RawMessage>(`${API}/messages/${encodeURIComponent(id)}?format=full`)),
+      );
+      return { messages, complete };
     },
   };
 }
@@ -76,6 +93,39 @@ export function readMessage(raw: RawMessage): MailMessage {
     receivedAt: new Date(Number.isFinite(sent) && sent > 0 ? sent : Date.now()),
     text: partsText(raw.payload),
   };
+}
+
+/**
+ * Narrows a Gmail search to mail received after a moment. Gmail reads a bare number as Unix seconds,
+ * which avoids its date form being read in the account's own time zone. The original query is
+ * bracketed so an OR inside it cannot swallow the date.
+ */
+export function receivedAfter(query: string, since: Date): string {
+  return `(${query}) after:${Math.floor(since.getTime() / 1000)}`;
+}
+
+/**
+ * Runs `fn` over every item, `limit` at a time, keeping results in the items' order. The first
+ * failure stops every worker from starting anything new: once one message has failed the whole
+ * search has, and anything else fetched would only be thrown away.
+ */
+async function inOrder<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const i = next++;
+      try {
+        out[i] = await fn(items[i]);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 /** Every text part of a message, however deeply nested, decoded and joined. */

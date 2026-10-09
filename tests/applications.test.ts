@@ -1,7 +1,8 @@
 // Storing what a mailbox scan found, against the real database.
 import pg from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { listApplications, saveApplications, type Application } from '../src/lib/applications.ts';
+import { listApplications, markReadThrough, readThrough, RESCAN_OVERLAP_MS, saveApplications, scanMailbox, type Application } from '../src/lib/applications.ts';
+import type { Mailbox } from '../src/lib/gmail.ts';
 import { OWNER_URL } from './db.ts';
 
 const pool = new pg.Pool({ connectionString: OWNER_URL });
@@ -94,5 +95,58 @@ describe('storing applications', () => {
 
   it('gives someone with no applications an empty list, not an error', async () => {
     expect(await listApplications(pool, 'nobody@example.org')).toEqual([]);
+  });
+});
+
+describe('remembering how far a mailbox has been read', () => {
+  beforeEach(() => pool.query('TRUNCATE mail_scans'));
+
+  it('knows nothing about a mailbox never scanned, so the first scan reads it all', async () => {
+    expect(await readThrough(pool, ME)).toBeNull();
+  });
+
+  it('remembers the point reached', async () => {
+    await markReadThrough(pool, ME, new Date('2026-10-01T00:00:00Z'));
+    expect((await readThrough(pool, 'Owner@Example.org'))?.toISOString()).toBe('2026-10-01T00:00:00.000Z');
+  });
+
+  it('never moves backwards, so a slow scan finishing late cannot undo a quicker one', async () => {
+    await markReadThrough(pool, ME, new Date('2026-10-05T00:00:00Z'));
+    await markReadThrough(pool, ME, new Date('2026-10-01T00:00:00Z'));
+    expect((await readThrough(pool, ME))?.toISOString()).toBe('2026-10-05T00:00:00.000Z');
+  });
+});
+
+describe('scanning from where the last scan stopped', () => {
+  /** A pretend mailbox that records the query it was asked. */
+  const fakeMailbox = (complete = true) => {
+    const asked: string[] = [];
+    const mailbox: Mailbox = {
+      address: async () => ME,
+      search: async (q) => {
+        asked.push(q);
+        return { messages: [], complete };
+      },
+    };
+    return { mailbox, asked };
+  };
+
+  it('reads everything when there is nowhere to start from', async () => {
+    const { mailbox, asked } = fakeMailbox();
+    await scanMailbox(mailbox, { since: null });
+    expect(asked[0]).not.toContain('after:');
+  });
+
+  it('asks only for mail since the last scan, with a day of overlap', async () => {
+    const { mailbox, asked } = fakeMailbox();
+    const since = new Date('2026-10-05T00:00:00Z');
+    await scanMailbox(mailbox, { since });
+    const after = Number(asked[0].match(/after:(\d+)$/)![1]) * 1000;
+    expect(since.getTime() - after).toBe(RESCAN_OVERLAP_MS);
+  });
+
+  it('passes on whether the read was complete, so the caller knows whether to move the marker', async () => {
+    expect((await scanMailbox(fakeMailbox(false).mailbox)).complete).toBe(false);
+    expect((await scanMailbox(fakeMailbox(true).mailbox)).complete).toBe(true);
   });
 });
