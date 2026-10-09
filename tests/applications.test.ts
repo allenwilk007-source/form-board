@@ -2,7 +2,7 @@
 import pg from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { listApplications, markReadThrough, readThrough, RESCAN_OVERLAP_MS, saveApplications, scanMailbox, type Application } from '../src/lib/applications.ts';
-import type { Mailbox } from '../src/lib/gmail.ts';
+import type { Mailbox, MailMessage } from '../src/lib/gmail.ts';
 import { OWNER_URL } from './db.ts';
 
 const pool = new pg.Pool({ connectionString: OWNER_URL });
@@ -148,5 +148,60 @@ describe('scanning from where the last scan stopped', () => {
   it('passes on whether the read was complete, so the caller knows whether to move the marker', async () => {
     expect((await scanMailbox(fakeMailbox(false).mailbox)).complete).toBe(false);
     expect((await scanMailbox(fakeMailbox(true).mailbox)).complete).toBe(true);
+  });
+});
+
+describe('short links across a whole scan', () => {
+  const PUBLISHED = '1FAIpQLSdsw98ypAQdRyxYlr5z5ysy5EwEyiGVMEGMyF5LMINzp4pT3g';
+  const long = `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform`;
+  const mail = (id: string, subject: string, text: string, at: string): MailMessage => ({ id, subject, from: '', receivedAt: new Date(at), text });
+  const mailboxOf = (messages: MailMessage[]): Mailbox => ({ address: async () => ME, search: async () => ({ messages, complete: true }) });
+  /** forms.gle as a pretend: each code redirects to the given form, anything else is unreachable. */
+  const shortener = (map: Record<string, string>) => {
+    let calls = 0;
+    const fetch = (async (input: string | URL | Request) => {
+      calls++;
+      const code = new URL(String(input)).pathname.slice(1);
+      if (!map[code]) throw new TypeError('fetch failed');
+      return new Response(null, { status: 302, headers: { location: map[code] } });
+    }) as typeof globalThis.fetch;
+    return { fetch, calls: () => calls };
+  };
+
+  const invitation = mail('invite', 'Applications open', 'Apply at https://forms.gle/applyNow1', '2026-09-01T10:00:00Z');
+  const receipt = mail('receipt', 'Your response', `Edit your response: ${long}?edit2=2_ABaOnuc`, '2026-09-03T10:00:00Z');
+
+  it('recognises an invitation by short link and a receipt by full link as one form, sent', async () => {
+    const scan = await scanMailbox(mailboxOf([receipt, invitation]), { fetch: shortener({ applyNow1: long }).fetch });
+    await saveApplications(pool, ME, scan.found);
+    expect(await listApplications(pool, ME)).toMatchObject([{ form_id: PUBLISHED, status: 'submitted' }]);
+    expect(scan).toMatchObject({ shortLinks: 1, unresolved: 0 });
+  });
+
+  it('still records a short link it cannot follow, by its code, and says how many it could not', async () => {
+    const scan = await scanMailbox(mailboxOf([invitation]), { fetch: shortener({}).fetch });
+    expect(scan.found).toMatchObject([{ formId: 'applyNow1', formIdKind: 'short', status: 'found' }]);
+    expect(scan).toMatchObject({ shortLinks: 1, unresolved: 1 });
+    // And the database accepts it, rather than the whole save failing.
+    expect(await saveApplications(pool, ME, scan.found)).toEqual({ added: 1, updated: 0 });
+  });
+
+  it('follows a short link once however many messages carry it', async () => {
+    const reminders = [1, 2, 3].map((n) => mail(`r${n}`, 'Reminder', 'https://forms.gle/applyNow1', `2026-09-0${n}T10:00:00Z`));
+    const s = shortener({ applyNow1: long });
+    await scanMailbox(mailboxOf(reminders), { fetch: s.fetch });
+    expect(s.calls()).toBe(1);
+  });
+
+  it('counts a receipt carrying both a short share link and the full edit link as one sent form', async () => {
+    const both = mail('m1', 'Your response', `Share: https://forms.gle/applyNow1\nEdit your response: ${long}?edit2=abc`, '2026-09-03T10:00:00Z');
+    const scan = await scanMailbox(mailboxOf([both]), { fetch: shortener({ applyNow1: long }).fetch });
+    expect(scan.found).toMatchObject([{ formId: PUBLISHED, status: 'submitted' }]);
+  });
+
+  it('does not reach out at all when no mail has a short link', async () => {
+    const s = shortener({});
+    await scanMailbox(mailboxOf([receipt]), { fetch: s.fetch });
+    expect(s.calls()).toBe(0);
   });
 });

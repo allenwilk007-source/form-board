@@ -1,6 +1,6 @@
 // Turning the owner's mail into a list of forms they were sent or have answered.
 import type { Queryable } from './db.ts';
-import { formLinks, type FormLink } from './form-links.ts';
+import { EDIT_RESPONSE, formLinks, keep, resolveShortLinks, type FormLink } from './form-links.ts';
 import { FORM_MAIL_QUERY, receivedAfter, type Mailbox, type MailMessage } from './gmail.ts';
 
 /**
@@ -24,16 +24,19 @@ export type Application = {
 };
 
 /**
- * Google's "edit your response" link carries this. It can only exist once a response has been
- * sent, so it is proof of a submission — and, being part of the link, it survives Google rewording
- * the mail and works in every language, which reading the text would not.
+ * The forms one message is about. A message mentioning two forms yields two.
+ *
+ * `resolved` maps forms.gle short codes to the forms they lead to. A short link that was followed
+ * becomes that form, so an invitation sent as forms.gle/abc and a receipt carrying the full link
+ * are recognised as the same form. A short link that could not be followed stays as itself.
  */
-const EDIT_RESPONSE = /[?&]edit2=/;
+export function applicationsIn(message: MailMessage, resolved: ReadonlyMap<string, FormLink> = new Map()): Application[] {
+  // Swap followed short links for their forms, then de-duplicate again: a receipt can carry the
+  // same form both as a short link and as its full edit-your-response link.
+  const seen = new Map<string, FormLink>();
+  for (const link of formLinks(message.text)) keep(seen, (link.kind === 'short' && resolved.get(link.id)) || link);
+  const links = [...seen.values()];
 
-/** The forms one message is about. A message mentioning two forms yields two. */
-export function applicationsIn(message: MailMessage): Application[] {
-  const links = formLinks(message.text);
-  const submitted = links.some((l) => EDIT_RESPONSE.test(l.url));
   return links.map((link) => ({
     formId: link.id,
     formIdKind: link.kind,
@@ -41,9 +44,11 @@ export function applicationsIn(message: MailMessage): Application[] {
     title: message.subject.trim() || '(no subject)',
     appliedAt: message.receivedAt,
     gmailMessageId: message.id,
-    // One message, one verdict: a receipt names the form it is a receipt for, and a link to a
-    // second form in the same mail (a footer, a "see also") is not evidence about that one.
-    status: submitted && links.length === 1 ? 'submitted' : 'found',
+    // Google's "edit your response" link can only exist once a response has been sent, and it is
+    // that one form's own response address, so it proves *that* form was sent — and, being part of
+    // the link, it survives Google rewording the mail and works in every language. Any other form
+    // in the same mail (a footer, a "see also", a short share link) is only known to have arrived.
+    status: EDIT_RESPONSE.test(link.url) ? 'submitted' : 'found',
   }));
 }
 
@@ -54,7 +59,14 @@ export function applicationsIn(message: MailMessage): Application[] {
  */
 export const RESCAN_OVERLAP_MS = 864e5;
 
-export type Scan = { found: Application[]; messages: number; complete: boolean };
+export type Scan = {
+  found: Application[];
+  messages: number;
+  complete: boolean;
+  /** forms.gle links seen, and how many of them could not be followed to a form. */
+  shortLinks: number;
+  unresolved: number;
+};
 
 /**
  * Everything the mailbox can say about forms. With `since`, only mail received after it (less the
@@ -62,11 +74,24 @@ export type Scan = { found: Application[]; messages: number; complete: boolean }
  */
 export async function scanMailbox(
   mailbox: Mailbox,
-  { query = FORM_MAIL_QUERY, max = 500, since }: { query?: string; max?: number; since?: Date | null } = {},
+  {
+    query = FORM_MAIL_QUERY,
+    max = 500,
+    since,
+    fetch: doFetch = fetch,
+  }: { query?: string; max?: number; since?: Date | null; fetch?: typeof fetch } = {},
 ): Promise<Scan> {
   const q = since ? receivedAfter(query, new Date(since.getTime() - RESCAN_OVERLAP_MS)) : query;
   const { messages, complete } = await mailbox.search(q, max);
-  return { found: messages.flatMap(applicationsIn), messages: messages.length, complete };
+  const codes = new Set(messages.flatMap((m) => formLinks(m.text).filter((l) => l.kind === 'short').map((l) => l.id)));
+  const resolved = await resolveShortLinks(codes, doFetch);
+  return {
+    found: messages.flatMap((m) => applicationsIn(m, resolved)),
+    messages: messages.length,
+    complete,
+    shortLinks: codes.size,
+    unresolved: codes.size - resolved.size,
+  };
 }
 
 /** Up to when this mailbox has been fully read, or null if it never has. */

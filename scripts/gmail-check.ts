@@ -1,7 +1,7 @@
 // Read-only walkthrough of the Gmail connection: lists the forms your mail mentions, and whether
 // each was answered. Touches neither Gmail nor the database — it only reads and prints.
-import { applicationsIn } from '../src/lib/applications.ts';
-import { FORM_MAIL_QUERY, mailboxFromEnv } from '../src/lib/gmail.ts';
+import { scanMailbox } from '../src/lib/applications.ts';
+import { mailboxFromEnv } from '../src/lib/gmail.ts';
 
 const mailbox = mailboxFromEnv();
 if (!mailbox) {
@@ -21,10 +21,9 @@ try {
 }
 
 console.log(`Reading ${address} for mail mentioning a Google Form (at most ${max} messages).\n`);
-const { messages, complete } = await mailbox.search(FORM_MAIL_QUERY, max);
-const found = messages.flatMap(applicationsIn);
+const { found, messages, complete, shortLinks, unresolved } = await scanMailbox(mailbox, { max });
 
-if (!messages.length) {
+if (!messages) {
   console.log('No mail mentions a Google Form at all. Nothing can be found this way.');
   process.exit(0);
 }
@@ -44,7 +43,13 @@ for (const a of found) {
 
 console.table([...byForm.values()].sort((a, b) => b.when.localeCompare(a.when)));
 const submitted = [...byForm.values()].filter((r) => r.status === 'submitted').length;
-console.log(`\n${messages.length} message(s) mention a form; ${byForm.size} distinct form(s); ${submitted} known to have been sent.`);
+console.log(`\n${messages} message(s) mention a form; ${byForm.size} distinct form(s); ${submitted} known to have been sent.`);
+if (unresolved) {
+  console.log(
+    `${unresolved} of ${shortLinks} forms.gle short link(s) could not be followed, so those are listed by their short code ` +
+      `and cannot be matched with other mail about the same form. If none could be followed, forms.gle is probably unreachable from here.`,
+  );
+}
 if (!complete) {
   console.log(`Stopped at ${max} messages; older mail was not read. Pass a higher number to read further, e.g. npm run gmail:check -- ${max * 4}`);
 }

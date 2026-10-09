@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formLinks } from '../src/lib/form-links.ts';
+import { formLinks, resolveShortLink, resolveShortLinks } from '../src/lib/form-links.ts';
 
 const PUBLISHED = '1FAIpQLSdsw98ypAQdRyxYlr5z5ysy5EwEyiGVMEGMyF5LMINzp4pT3g';
 const DIRECT = '1sLls-XCt1OLH5jsti1vLGTKFEpBnbJD4-7zur51w3CY';
@@ -71,5 +71,146 @@ describe('finding forms in an email', () => {
 
   it('refuses an id too short to be real, so stray paths are not mistaken for forms', () => {
     expect(formLinks('https://docs.google.com/forms/d/short/edit')).toEqual([]);
+  });
+});
+
+describe('keeping the link that proves a submission', () => {
+  const view = `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform`;
+  const edit = `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform?edit2=2_ABaOnuc`;
+
+  it('keeps the edit-your-response link when it comes after a plain link to the same form', () => {
+    // A receipt that says "view the form" before "edit your response" must still count as sent.
+    expect(formLinks(`View: ${view}\nEdit your response: ${edit}`)).toEqual([{ id: PUBLISHED, kind: 'published', url: edit }]);
+  });
+
+  it('keeps it when it comes first, too', () => {
+    expect(formLinks(`Edit your response: ${edit}\nView: ${view}`)[0].url).toBe(edit);
+  });
+});
+
+describe('forms.gle short links', () => {
+  it('finds a short link and marks it as not yet followed', () => {
+    expect(formLinks('Apply here: https://forms.gle/aBcD3fGh1jK2')).toEqual([
+      { id: 'aBcD3fGh1jK2', kind: 'short', url: 'https://forms.gle/aBcD3fGh1jK2' },
+    ]);
+  });
+
+  it('keeps a whole code that contains a hyphen or underscore instead of cutting it short', () => {
+    expect(formLinks('https://forms.gle/ab-cd_ef12')[0].id).toBe('ab-cd_ef12');
+  });
+
+  it('lists short and long links in the order they appear', () => {
+    const found = formLinks(`https://forms.gle/shortOne1 then https://docs.google.com/forms/d/e/${PUBLISHED}/viewform`);
+    expect(found.map((f) => f.kind)).toEqual(['short', 'published']);
+  });
+
+  it.each([
+    ['a look-alike host', 'https://forms.gle.evil.example/abcdef'],
+    ['a host ending in forms.gle', 'https://evilforms.gle/abcdef'],
+    ['a code too short to be real', 'https://forms.gle/ab'],
+  ])('finds nothing in %s', (_, text) => {
+    expect(formLinks(text)).toEqual([]);
+  });
+});
+
+/** A pretend forms.gle: answers by URL with a status and an optional Location, and records every call. */
+function fakeShortener(routes: Record<string, { status: number; location?: string } | 'network-error'>) {
+  const calls: { url: string; redirect?: RequestRedirect }[] = [];
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, redirect: init?.redirect });
+    const route = routes[url];
+    if (route === 'network-error') throw new TypeError('fetch failed');
+    if (!route) return new Response('not found', { status: 404 });
+    return new Response(null, { status: route.status, headers: route.location ? { location: route.location } : {} });
+  }) as typeof globalThis.fetch;
+  return { fetch, calls };
+}
+
+describe('following a short link', () => {
+  const long = `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform?usp=send_form`;
+
+  it('follows the redirect to the form it leads to', async () => {
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 302, location: long } });
+    expect(await resolveShortLink('abc123', s.fetch)).toEqual({ id: PUBLISHED, kind: 'published', url: long });
+  });
+
+  it('reads the redirect itself rather than letting fetch follow it', async () => {
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 302, location: long } });
+    await resolveShortLink('abc123', s.fetch);
+    expect(s.calls[0].redirect).toBe('manual');
+  });
+
+  it('never fetches the form itself, only forms.gle', async () => {
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 301, location: long } });
+    await resolveShortLink('abc123', s.fetch);
+    expect(s.calls.map((c) => new URL(c.url).host)).toEqual(['forms.gle']);
+  });
+
+  it('assumes nothing about the shape of the destination: any form link Google lands on will do', async () => {
+    const direct = 'https://docs.google.com/forms/d/1sLls-XCt1OLH5jsti1vLGTKFEpBnbJD4-7zur51w3CY/viewform';
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 302, location: direct } });
+    expect((await resolveShortLink('abc123', s.fetch))?.kind).toBe('direct');
+  });
+
+  it('follows a further forms.gle hop', async () => {
+    const s = fakeShortener({
+      'https://forms.gle/abc123': { status: 302, location: 'https://forms.gle/xyz789' },
+      'https://forms.gle/xyz789': { status: 302, location: long },
+    });
+    expect((await resolveShortLink('abc123', s.fetch))?.id).toBe(PUBLISHED);
+  });
+
+  it('gives up on a redirect loop instead of following it for ever', async () => {
+    const s = fakeShortener({
+      'https://forms.gle/aaaa': { status: 302, location: 'https://forms.gle/bbbb' },
+      'https://forms.gle/bbbb': { status: 302, location: 'https://forms.gle/aaaa' },
+    });
+    expect(await resolveShortLink('aaaa', s.fetch)).toBeNull();
+    expect(s.calls).toHaveLength(3);
+  });
+
+  it('does not follow a redirect anywhere but forms.gle, so an email cannot steer it elsewhere', async () => {
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 302, location: 'https://internal.example/admin' } });
+    expect(await resolveShortLink('abc123', s.fetch)).toBeNull();
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it('does not follow a downgrade to plain http', async () => {
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 302, location: 'http://forms.gle/xyz789' } });
+    expect(await resolveShortLink('abc123', s.fetch)).toBeNull();
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it.each([
+    ['a dead link', { status: 404 }],
+    ['a page instead of a redirect', { status: 200 }],
+    ['a redirect with nowhere to go', { status: 302 }],
+  ])('gives up quietly on %s', async (_, route) => {
+    expect(await resolveShortLink('abc123', fakeShortener({ 'https://forms.gle/abc123': route }).fetch)).toBeNull();
+  });
+
+  it('gives up quietly when forms.gle cannot be reached at all', async () => {
+    expect(await resolveShortLink('abc123', fakeShortener({ 'https://forms.gle/abc123': 'network-error' }).fetch)).toBeNull();
+  });
+});
+
+describe('following many short links', () => {
+  const long = (id: string) => `https://docs.google.com/forms/d/e/${id}${'x'.repeat(10)}/viewform`;
+
+  it('follows each code once, however many emails carry it', async () => {
+    const s = fakeShortener({ 'https://forms.gle/abc123': { status: 302, location: long('A') } });
+    await resolveShortLinks(['abc123', 'abc123', 'abc123'], s.fetch);
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it('keeps the ones it could follow when others fail, so one dead link never sinks a scan', async () => {
+    const s = fakeShortener({
+      'https://forms.gle/good1': { status: 302, location: long('A') },
+      'https://forms.gle/dead1': 'network-error',
+      'https://forms.gle/good2': { status: 302, location: long('B') },
+    });
+    const resolved = await resolveShortLinks(['good1', 'dead1', 'good2'], s.fetch);
+    expect([...resolved.keys()]).toEqual(['good1', 'good2']);
   });
 });

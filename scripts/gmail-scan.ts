@@ -41,6 +41,13 @@ try {
     );
   }
 
+  if (scan.unresolved) {
+    console.warn(
+      `\n${scan.unresolved} of ${scan.shortLinks} forms.gle short link(s) could not be followed. They are stored by their short code ` +
+        `and will not be matched with other mail about the same form until they can be; if none could be followed, forms.gle is probably unreachable from here.`,
+    );
+  }
+
   const all = await listApplications(pool, address);
   console.log(`\n${scan.messages} message(s) read, ${added} application(s) new, ${updated} changed; ${all.length} in total.`);
   console.table(all.map((r) => ({ form: r.title.slice(0, 60), status: r.status, when: r.applied_at.toISOString().slice(0, 10) })));

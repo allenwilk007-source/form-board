@@ -235,13 +235,27 @@ describe('what a message says about a form', () => {
     expect(a.status).toBe('submitted');
   });
 
-  it('does not credit a second form named in the same receipt', () => {
+  it('credits only the form the edit link belongs to, not a second form named in the same receipt', () => {
     const other = '1FAIpQLSf_SOMETHING_ELSE_abcdefghijkl';
     const found = at(
       `Your response: https://docs.google.com/forms/d/e/${PUBLISHED}/viewform?edit2=abc
        See also https://docs.google.com/forms/d/e/${other}/viewform`,
     );
-    expect(found.map((a) => a.status)).toEqual(['found', 'found']);
+    expect(found.map((a) => [a.formId, a.status])).toEqual([
+      [PUBLISHED, 'submitted'],
+      [other, 'found'],
+    ]);
+  });
+
+  it('still counts a receipt as sent when it also carries a short link that could not be followed', () => {
+    // With forms.gle unreachable the share link is a separate, unknown form; it must not cast doubt
+    // on the edit link, which proves its own form was sent.
+    const found = at(`Edit your response: https://docs.google.com/forms/d/e/${PUBLISHED}/viewform?edit2=abc
+      Share: https://forms.gle/applyNow1`);
+    expect(found.map((a) => [a.formIdKind, a.status])).toEqual([
+      ['published', 'submitted'],
+      ['short', 'found'],
+    ]);
   });
 
   it('uses the subject as the title, and says so plainly when there is none', () => {

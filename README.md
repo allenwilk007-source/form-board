@@ -104,6 +104,12 @@ Each form comes back as one of:
 - **submitted** — you answered it, proved by a link back to your own response ("edit your response"),
   which only exists once a response has been sent.
 
+Links shortened with `forms.gle` are followed to the form they lead to (only `forms.gle` itself is
+ever requested), so an invitation sent as a short link and a receipt carrying the full link count
+as the same form. A short link that cannot be followed is still recorded, by its short code, and the
+scan says how many it could not follow; if it is all of them, `forms.gle` is unreachable from where
+the scan is running.
+
 There is deliberately no "opened". Nothing in a mailbox can say whether you opened a form, and a
 receipt only exists after you have answered. Catching that needs a browser extension, not mail.
 

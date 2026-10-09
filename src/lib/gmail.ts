@@ -5,6 +5,7 @@
 //   - the invitation that sent them the form, which arrives before they answer;
 //   - the "copy of your response" receipt, which arrives after, when the form's owner switched it on.
 // Nothing here reads the wording of a message, so it works whatever language the mail is in.
+import { inOrder } from './concurrency.ts';
 import { createGet, createTokenSource, type TokenOptions } from './google-token.ts';
 
 /** Read-only, and only the owner's own mailbox. Google counts this a restricted permission. */
@@ -102,30 +103,6 @@ export function readMessage(raw: RawMessage): MailMessage {
  */
 export function receivedAfter(query: string, since: Date): string {
   return `(${query}) after:${Math.floor(since.getTime() / 1000)}`;
-}
-
-/**
- * Runs `fn` over every item, `limit` at a time, keeping results in the items' order. The first
- * failure stops every worker from starting anything new: once one message has failed the whole
- * search has, and anything else fetched would only be thrown away.
- */
-async function inOrder<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  let failed = false;
-  const worker = async () => {
-    while (!failed && next < items.length) {
-      const i = next++;
-      try {
-        out[i] = await fn(items[i]);
-      } catch (err) {
-        failed = true;
-        throw err;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 /** Every text part of a message, however deeply nested, decoded and joined. */
