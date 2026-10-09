@@ -118,3 +118,12 @@ dl.meta dt { color: var(--muted); }
 dl.meta dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 560px) { dl.meta { grid-template-columns: 1fr; gap: 0; } dl.meta dd { margin-bottom: 8px; } }
 nav.pages { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+
+/* The owner's home: forms they made beside forms they applied to. Two columns when there is room,
+   one above the other on a phone. */
+main.wide { max-width: 1160px; }
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; align-items: start; }
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+.item .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: .92rem; }
+.item .warn { font-size: .88rem; }
+.item .actions { display: flex; flex-wrap: wrap; gap: 6px 14px; }

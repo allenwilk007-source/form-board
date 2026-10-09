@@ -12,6 +12,11 @@ export function devSignInEnabled(): boolean {
   return process.env.DEV_SIGNIN === '1' && process.env.NODE_ENV !== 'production';
 }
 
+/** Whether Google sign-in is set up: the client, its secret and the redirect URI are all present. */
+export function googleSignInEnabled(): boolean {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI);
+}
+
 /**
  * Refuses a form post that comes from another site. The session cookie is SameSite=Lax, which already
  * stops most of these; this is a second check. Browsers send Origin on every POST.

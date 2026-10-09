@@ -27,17 +27,80 @@ const source = (fetch: typeof globalThis.fetch, now = () => NOW) =>
   createGoogleSource({ clientId: 'cid', clientSecret: 'secret-xyz', refreshToken: 'refresh-abc', fetch, now });
 
 describe('listForms', () => {
-  it('asks Drive for forms the owner owns, not trashed, changed in the last 60 days, following every page', async () => {
+  /** A Drive modifiedTime that many days before NOW. */
+  const daysAgo = (n: number) => new Date(NOW - n * 864e5).toISOString();
+  const recent = daysAgo(FORM_WINDOW_DAYS - 1);
+  const old = daysAgo(FORM_WINDOW_DAYS + 1);
+  const openForm = { body: { publishSettings: { publishState: { isPublished: true, isAcceptingResponses: true } } } };
+  const closedForm = { body: { publishSettings: { publishState: { isPublished: true, isAcceptingResponses: false } } } };
+
+  it('asks Drive for every form the owner owns and has not trashed, following every page', async () => {
     const g = fakeGoogle({
       [TOKEN]: okToken,
-      [DRIVE]: (url) => (url.searchParams.get('pageToken') ? { body: { files: [{ id: 'f3' }] } } : { body: { files: [{ id: 'f1' }, { id: 'f2' }], nextPageToken: 'p2' } }),
+      [DRIVE]: (url) =>
+        url.searchParams.get('pageToken')
+          ? { body: { files: [{ id: 'f3', modifiedTime: recent }] } }
+          : { body: { files: [{ id: 'f1', modifiedTime: recent }, { id: 'f2', modifiedTime: recent }], nextPageToken: 'p2' } },
     });
     expect(await source(g.fetch).listForms()).toEqual(['f1', 'f2', 'f3']);
+    // No date in the query: an open form must be found however old it is, and Drive cannot say
+    // whether a form is open, so the filtering happens here instead.
     const q = new URL(g.calls[1].url).searchParams.get('q')!;
-    const since = new Date(NOW - FORM_WINDOW_DAYS * 864e5).toISOString();
-    expect(q).toBe(`mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false and modifiedTime > '${since}'`);
-    expect(since).toBe('2026-08-07T12:00:00.000Z');
+    expect(q).toBe("mimeType = 'application/vnd.google-apps.form' and 'me' in owners and trashed = false");
+    expect(q).not.toContain('modifiedTime');
+    expect(new URL(g.calls[1].url).searchParams.get('fields')).toContain('modifiedTime');
     expect((g.calls[1].init?.headers as Record<string, string>).authorization).toBe('Bearer access-123');
+  });
+
+  it('lists a recently changed form without reading it, whether it is open or closed', async () => {
+    const g = fakeGoogle({ [TOKEN]: okToken, [DRIVE]: () => ({ body: { files: [{ id: 'f1', modifiedTime: recent }] } }) });
+    expect(await source(g.fetch).listForms()).toEqual(['f1']);
+    // Only the token and Drive calls: the form itself is not fetched to decide this.
+    expect(g.calls.filter((c) => c.url.startsWith(FORMS))).toEqual([]);
+  });
+
+  it('keeps an old form that is still accepting responses', async () => {
+    const g = fakeGoogle({ [TOKEN]: okToken, [DRIVE]: () => ({ body: { files: [{ id: 'f1', modifiedTime: daysAgo(900) }] } }), [FORMS]: () => openForm });
+    expect(await source(g.fetch).listForms()).toEqual(['f1']);
+  });
+
+  it('drops an old form that has closed', async () => {
+    const g = fakeGoogle({ [TOKEN]: okToken, [DRIVE]: () => ({ body: { files: [{ id: 'f1', modifiedTime: old }] } }), [FORMS]: () => closedForm });
+    expect(await source(g.fetch).listForms()).toEqual([]);
+  });
+
+  it('keeps an old form with no publish settings, which counts as open', async () => {
+    const g = fakeGoogle({ [TOKEN]: okToken, [DRIVE]: () => ({ body: { files: [{ id: 'f1', modifiedTime: old }] } }), [FORMS]: () => ({ body: {} }) });
+    expect(await source(g.fetch).listForms()).toEqual(['f1']);
+  });
+
+  it('treats a missing modifiedTime as old and falls back to asking whether the form is open', async () => {
+    const g = fakeGoogle({ [TOKEN]: okToken, [DRIVE]: () => ({ body: { files: [{ id: 'f1' }] } }), [FORMS]: () => closedForm });
+    expect(await source(g.fetch).listForms()).toEqual([]);
+  });
+
+  it('keeps an old form it cannot read, so the failure reaches the sync log instead of hiding it', async () => {
+    const g = fakeGoogle({ [TOKEN]: okToken, [DRIVE]: () => ({ body: { files: [{ id: 'f1', modifiedTime: old }] } }), [FORMS]: () => ({ status: 500, body: {} }) });
+    expect(await source(g.fetch).listForms()).toEqual(['f1']);
+  });
+
+  it('sorts out a mixed set: recent ones kept, old ones only while open', async () => {
+    const forms: Record<string, { body: unknown }> = { 'old-open': openForm, 'old-shut': closedForm };
+    const g = fakeGoogle({
+      [TOKEN]: okToken,
+      [DRIVE]: () => ({
+        body: {
+          files: [
+            { id: 'new-shut', modifiedTime: recent },
+            { id: 'old-open', modifiedTime: old },
+            { id: 'old-shut', modifiedTime: old },
+            { id: 'new-open', modifiedTime: daysAgo(0) },
+          ],
+        },
+      }),
+      [FORMS]: (url) => forms[decodeURIComponent(url.pathname.split('/').pop()!)] ?? closedForm,
+    });
+    expect(await source(g.fetch).listForms()).toEqual(['new-shut', 'old-open', 'new-open']);
   });
 });
 

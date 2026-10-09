@@ -103,3 +103,28 @@ export async function recentSyncRuns(db: Queryable, limit = 20): Promise<SyncRun
     )
   ).rows;
 }
+
+export type MadeForm = {
+  id: string;
+  title: string;
+  responder_uri: string | null;
+  accepting_responses: boolean;
+  emails_verified: boolean;
+  submissions: number;
+};
+
+/**
+ * The owner's own forms for their home page: the ones currently listed, open ones first. Counts
+ * every stored response, matched to a person or not, because this is the owner looking at their
+ * own forms, not a person looking at their submissions.
+ */
+export async function madeForms(db: Queryable): Promise<MadeForm[]> {
+  return (
+    await db.query<MadeForm>(
+      `SELECT f.id, f.title, f.responder_uri, f.accepting_responses, f.emails_verified,
+              (SELECT count(*)::int FROM submissions s WHERE s.form_id = f.id AND s.deleted_at IS NULL AND s.removed_from_source_at IS NULL) AS submissions
+       FROM forms f WHERE f.listed
+       ORDER BY f.accepting_responses DESC, f.title`,
+    )
+  ).rows;
+}

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { HELP_FORM_ID, PEOPLE } from '../src/fake-google/data.ts';
 import { createFakeSource } from '../src/fake-google/source.ts';
 import { asUser } from '../src/lib/as-user.ts';
-import { deleteSubmission, getSubmission, listForms, listSubmissions, PAGE_SIZE, recentSyncRuns } from '../src/lib/owner-data.ts';
+import { deleteSubmission, getSubmission, listForms, listSubmissions, madeForms, PAGE_SIZE, recentSyncRuns } from '../src/lib/owner-data.ts';
 import { syncAll } from '../src/lib/sync.ts';
 import { OWNER_URL, USER_URL } from './db.ts';
 
@@ -119,5 +119,40 @@ describe('recentSyncRuns', () => {
     expect(runs).toHaveLength(3);
     expect(runs[0].form_title).toBe('Help Requests');
     expect(runs.every((r) => r.ok)).toBe(true);
+  });
+});
+
+describe('madeForms', () => {
+  it('lists the listed forms, open ones first, then by title', async () => {
+    expect((await madeForms(pool)).map((f) => [f.title, f.accepting_responses])).toEqual([
+      ['Community Project Ideas', true],
+      ['Event Feedback', true],
+      ['Volunteer Sign-up', true],
+      ['Help Requests', false],
+    ]);
+  });
+
+  it('leaves out a form that has dropped off the list', async () => {
+    await pool.query("UPDATE forms SET listed = false WHERE title = 'Event Feedback'");
+    expect((await madeForms(pool)).map((f) => f.title)).not.toContain('Event Feedback');
+  });
+
+  it("counts every live response, whether or not it could be matched to a person", async () => {
+    const feedback = (await madeForms(pool)).find((f) => f.title === 'Event Feedback')!;
+    // Its emails are not verified, so none of its responses belong to anyone — and all still count.
+    expect(feedback).toMatchObject({ emails_verified: false, submissions: 8 });
+  });
+
+  it('stops counting a response once it is deleted or gone from Google', async () => {
+    const before = (await madeForms(pool)).find((f) => f.title === 'Community Project Ideas')!.submissions;
+    await deleteSubmission(pool, await idOf('ideas-resp-001'));
+    await pool.query("UPDATE submissions SET removed_from_source_at = now() WHERE google_response_id = 'ideas-resp-002'");
+    expect((await madeForms(pool)).find((f) => f.title === 'Community Project Ideas')!.submissions).toBe(before - 2);
+  });
+
+  it('carries the link people use to fill each form in', async () => {
+    expect((await madeForms(pool)).find((f) => f.title === 'Volunteer Sign-up')!.responder_uri).toBe(
+      'https://docs.google.com/forms/d/e/fake-form-volunteer/viewform',
+    );
   });
 });
