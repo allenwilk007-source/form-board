@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PEOPLE } from '../src/fake-google/data.ts';
+import { showDate } from '../src/lib/format.ts';
 import { createFakeSource } from '../src/fake-google/source.ts';
 import { createSessionValue, createSignInValue, readSignInValue, SESSION_COOKIE, SIGNIN_COOKIE } from '../src/lib/session.ts';
 import { syncAll } from '../src/lib/sync.ts';
@@ -332,5 +333,89 @@ describe('pages for signed-in people', () => {
     await pool.query("UPDATE forms SET accepting_responses = false WHERE google_form_id = 'fake-form-volunteer'");
     const html = await text('/', PEOPLE.jo);
     expect(html).not.toContain('Volunteer Sign-up');
+  });
+});
+
+describe("the owner's home page", () => {
+  beforeEach(() => pool.query('TRUNCATE applications, mail_scans RESTART IDENTITY'));
+
+  const SENT_LINK = 'https://docs.google.com/forms/d/e/1FAIpQLSfSENTFORM0123456789/viewform?edit2=2_ABaOnuc';
+  const SEEN_LINK = 'https://docs.google.com/forms/d/e/1FAIpQLSfSEENFORM0123456789/viewform';
+  const apply = (title: string, link: string, status: 'found' | 'submitted', id: string, at = '2026-09-03T10:00:00Z') =>
+    pool.query(
+      `INSERT INTO applications (person_email, form_id, form_id_kind, link, title, applied_at, gmail_message_id, status)
+       VALUES ($1, $2, 'published', $3, $4, $5, $2, $6)`,
+      [OWNER, id, link, title, at, status],
+    );
+  const section = (html: string, heading: string, next?: string) => html.slice(html.indexOf(heading), next ? html.indexOf(next) : undefined);
+
+  it('puts the forms the owner made beside the forms they applied to', async () => {
+    const html = await (await get('/', OWNER)).text();
+    expect(html).toContain('Forms you made');
+    expect(html).toContain('Forms you applied to');
+    expect(html).toMatch(/<div class="split">/);
+  });
+
+  it('lists the forms they made, open ones first, with how many responses each has', async () => {
+    const made = section(await (await get('/', OWNER)).text(), 'Forms you made', 'Forms you applied to');
+    const titles = [...made.matchAll(/<span class="title">([^<]+)<\/span>/g)].map((m) => m[1]);
+    expect(titles).toEqual(['Community Project Ideas', 'Event Feedback', 'Volunteer Sign-up', 'Help Requests']);
+    expect(made).toContain('>24 responses<');
+    expect(made).toContain('>Closed<');
+  });
+
+  it('warns about a form that does not collect verified emails, and only that one', async () => {
+    const made = section(await (await get('/', OWNER)).text(), 'Forms you made', 'Forms you applied to');
+    expect(made.match(/Not collecting verified emails/g)).toHaveLength(1);
+    const feedback = made.slice(made.indexOf('Event Feedback'), made.indexOf('Volunteer Sign-up'));
+    expect(feedback).toContain('Not collecting verified emails');
+  });
+
+  it("says plainly when the owner's inbox has not been read yet", async () => {
+    const applied = section(await (await get('/', OWNER)).text(), 'Forms you applied to');
+    expect(applied).toContain('hasn’t been read yet');
+  });
+
+  it('lists what was found in the inbox, sent ones marked as such, with a link back to the response', async () => {
+    await apply('Graduate scheme 2026', SENT_LINK, 'submitted', 'sent');
+    await apply('Volunteer weekend', SEEN_LINK, 'found', 'seen', '2026-09-01T10:00:00Z');
+    await pool.query("INSERT INTO mail_scans (person_email, read_through) VALUES ($1, '2026-09-05T00:00:00Z')", [OWNER]);
+    const applied = section(await (await get('/', OWNER)).text(), 'Forms you applied to');
+    expect(applied).toContain(`Inbox read up to ${showDate(new Date('2026-09-05T00:00:00Z'))}.`);
+    const items = [...applied.matchAll(/<li class="item">([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toContain('Graduate scheme 2026');
+    expect(items[0]).toContain('>Submitted<');
+    expect(items[0]).toContain(`href="${SENT_LINK}"`);
+    expect(items[0]).toContain('>Your response<');
+    expect(items[1]).toContain('>Received<');
+    expect(items[1]).toContain('>Open form<');
+  });
+
+  it('never turns a link that is not on Google Forms into something clickable', async () => {
+    await apply('Looks like a form', 'javascript:alert(document.cookie)', 'found', 'bad1');
+    await apply('Look-alike host', 'https://docs.google.com.evil.example/forms/d/e/x/viewform', 'found', 'bad2');
+    const applied = section(await (await get('/', OWNER)).text(), 'Forms you applied to');
+    expect(applied).toContain('Looks like a form');
+    expect(applied).not.toContain('javascript:');
+    expect(applied).not.toContain('evil.example');
+  });
+
+  it('shows an email subject as text, never as HTML', async () => {
+    await apply('<script>alert("x")</script> Apply now', SEEN_LINK, 'found', 'xss');
+    const html = await (await get('/', OWNER)).text();
+    expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; Apply now');
+    expect(html).not.toContain('<script>alert("x")</script>');
+  });
+
+  it("never shows anybody else what is in the owner's inbox", async () => {
+    await apply('Graduate scheme 2026', SENT_LINK, 'submitted', 'sent');
+    const html = await (await get('/', PEOPLE.alex)).text();
+    expect(html).not.toContain('Forms you applied to');
+    expect(html).not.toContain('Graduate scheme 2026');
+    expect(html).not.toContain('1FAIpQLSfSENTFORM');
+    // Everyone else still gets the page they always had.
+    expect(html).toContain('Open forms');
+    expect(html).toContain('My submissions');
   });
 });

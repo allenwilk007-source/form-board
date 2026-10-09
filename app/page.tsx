@@ -4,6 +4,7 @@ import { showDate } from '../src/lib/format.ts';
 import { homeFor } from '../src/lib/person-data.ts';
 import { userPool } from '../src/lib/pools.ts';
 import { currentEmail } from '../src/server/auth.ts';
+import { OwnerHome } from './_components/owner-home.tsx';
 import { SignedInBar } from './_components/signed-in-bar.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -11,6 +12,14 @@ export const dynamic = 'force-dynamic';
 export default async function Home({ searchParams }: { searchParams: Promise<{ signin?: string }> }) {
   const email = await currentEmail();
   if (!email) return <SignIn signin={(await searchParams).signin} />;
+  if (isOwner(email)) {
+    return (
+      <>
+        <SignedInBar email={email} />
+        <OwnerHome email={email} />
+      </>
+    );
+  }
   const { openForms, submissions } = await homeFor(userPool(), email);
 
   return (

@@ -82,6 +82,11 @@ sync log; repeat step 4 to reconnect.
 
 The other half of the site: forms somebody *else* made, that you were sent or have answered.
 
+Signed in as the owner, the home page shows both halves side by side: **Forms you made** on the
+left, **Forms you applied to** on the right (one above the other on a phone). The right-hand column
+is read from the owner's own inbox, so it is only ever shown to the owner; everyone else keeps the
+"Open forms" and "My submissions" page.
+
 Google has no way to ask which forms a person has responded to. The Forms API only answers for
 forms you own, and Google Forms keeps no such list. The one trace is your mail, so that is what is
 read — for the **link** a message carries, never its wording, so it works in any language and

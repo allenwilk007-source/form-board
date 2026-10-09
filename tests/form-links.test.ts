@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formLinks, resolveShortLink, resolveShortLinks } from '../src/lib/form-links.ts';
+import { formLinks, resolveShortLink, resolveShortLinks, safeFormHref } from '../src/lib/form-links.ts';
 
 const PUBLISHED = '1FAIpQLSdsw98ypAQdRyxYlr5z5ysy5EwEyiGVMEGMyF5LMINzp4pT3g';
 const DIRECT = '1sLls-XCt1OLH5jsti1vLGTKFEpBnbJD4-7zur51w3CY';
@@ -212,5 +212,32 @@ describe('following many short links', () => {
     });
     const resolved = await resolveShortLinks(['good1', 'dead1', 'good2'], s.fetch);
     expect([...resolved.keys()]).toEqual(['good1', 'good2']);
+  });
+});
+
+describe('making a stored link safe to click', () => {
+  it.each([
+    ['a published form', `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform`],
+    ['an edit-your-response link', `https://docs.google.com/forms/d/e/${PUBLISHED}/viewform?edit2=2_ABa`],
+    ['a short link', 'https://forms.gle/aBcD3fGh1jK2'],
+  ])('passes %s through unchanged', (_, link) => {
+    expect(safeFormHref(link)).toBe(link);
+  });
+
+  it('upgrades plain http to https', () => {
+    expect(safeFormHref(`http://docs.google.com/forms/d/e/${PUBLISHED}/viewform`)).toBe(`https://docs.google.com/forms/d/e/${PUBLISHED}/viewform`);
+  });
+
+  it.each([
+    ['javascript:', 'javascript:alert(document.cookie)'],
+    ['data:', 'data:text/html,<script>alert(1)</script>'],
+    ['a look-alike host', 'https://docs.google.com.evil.example/forms/d/e/x/viewform'],
+    ['another Google page', 'https://docs.google.com/document/d/1abcdefghij/edit'],
+    ['someone else entirely', 'https://evil.example/forms/d/e/x/viewform'],
+    ['a login smuggled into the address', 'https://user:pass@docs.google.com/forms/d/e/x/viewform'],
+    ['an unusual port', 'https://docs.google.com:8443/forms/d/e/x/viewform'],
+    ['nonsense', 'not a url'],
+  ])('refuses %s', (_, link) => {
+    expect(safeFormHref(link)).toBeNull();
   });
 });

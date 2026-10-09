@@ -116,3 +116,23 @@ export async function resolveShortLinks(codes: Iterable<string>, doFetch: typeof
   });
   return out;
 }
+
+/**
+ * A stored form link made safe to put in an href, or null. Links come from the text of somebody's
+ * email, so before one becomes something a person can click it must be a plain web address on
+ * Google Forms itself — never javascript:, data:, or a look-alike host — and is always sent over
+ * https. The parser already only stores such links; this does not rely on that.
+ */
+export function safeFormHref(link: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  const onForms = (url.host === 'docs.google.com' && url.pathname.startsWith('/forms/')) || url.host === 'forms.gle';
+  if (!onForms || url.username || url.password || url.port) return null;
+  url.protocol = 'https:';
+  return url.toString();
+}
